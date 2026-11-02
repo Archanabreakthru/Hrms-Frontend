@@ -147,7 +147,7 @@ const seedAssignments: AssignmentRecord[] = [
   {
     id: 'CAS-203',
     clientId: 'CLI-101',
-    employeeId: 'EMP-006',
+    employeeId: 'EMP-016',
     project: 'Payment Gateway Security Audit',
     location: 'Remote',
     workMode: 'Remote',

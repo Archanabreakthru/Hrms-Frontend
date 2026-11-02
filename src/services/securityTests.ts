@@ -15,7 +15,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
   const results: SecurityTestCaseResult[] = [];
 
   // Personas
-  const hrAdmin = personaUsers.find((p) => p.role === 'hr_admin')!; // Anamika (EMP-001)
+  const hrAdmin = personaUsers.find((p) => p.role === 'hr_admin')!; // Raseedh (EMP-001)
   const manager = personaUsers.find((p) => p.role === 'senior_manager')!; // Krishnaraj (EMP-002)
   const employee1 = personaUsers.find((p) => p.id === 'user_emp_designer')!; // Archana (EMP-003, reports to EMP-002)
   const employee2 = personaUsers.find((p) => p.id === 'user_emp_junior')!; // Mahalakshmi (EMP-004, reports to EMP-002)
@@ -112,8 +112,8 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
   // Scenario 5: Reporting Manager views an unrelated employee
   // ----------------------------------------------------
   {
-    // Krishnaraj (Engineering) views Rohan Mehta (EMP-006, Finance - reports to CFO/HR, not Krishnaraj)
-    const profile = permissionService.getAuthorizedProfile('EMP-006', manager);
+    // Krishnaraj (Engineering) views Gowtham (EMP-017, Finance - reports to CFO/HR, not Krishnaraj)
+    const profile = permissionService.getAuthorizedProfile('EMP-017', manager);
     const isBasicOnly = profile?.viewScope === 'colleague_basic';
     const noTeamData = profile && !('address' in profile) && !('emergencyContact' in profile);
 
@@ -125,7 +125,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
       actual: isBasicOnly && noTeamData
         ? 'Unrelated employee restricted to basic directory profile.'
         : 'Out-of-scope employee details leaked to manager.',
-      details: 'Tested Krishnaraj viewing Finance employee EMP-006. System detected absence of reporting relationship.'
+      details: 'Tested Krishnaraj viewing Finance employee EMP-017. System detected absence of reporting relationship.'
     });
   }
 
@@ -160,7 +160,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
       passed: Boolean(isOrgAdmin && hasAdminAccess),
       expected: 'Authorized HR Administrator can view complete employee lifecycle and organizational profile.',
       actual: isOrgAdmin && hasAdminAccess ? 'Complete HR Admin record returned.' : 'HR Admin denied access.',
-      details: 'Evaluated Anamika viewing Mahalakshmi (EMP-004). Organization admin scope granted.'
+      details: 'Evaluated Raseedh viewing Mahalakshmi (EMP-004). Organization admin scope granted.'
     });
   }
 
@@ -211,7 +211,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
       actual: docAccessSecured
         ? 'Colleague document access denied (false). Manager and HR access permitted (true).'
         : 'Document access leak detected.',
-      details: 'Verified document endpoint rejects Archana requesting Mahalakshmi docs, while allowing Krishnaraj and Anamika.'
+      details: 'Verified document endpoint rejects Archana requesting Mahalakshmi docs, while allowing Krishnaraj and Raseedh.'
     });
   }
 
@@ -459,7 +459,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
       id: 'ATT-16',
       scenario: 'Test 16: Closing client deployment blocks post-closure attendance while preserving Active company employment',
       passed,
-      expected: 'Closed deployment CAS-203 blocks new attendance after actualEndDate while employee EMP-006 remains Active in Orbyx HRMS.',
+      expected: 'Closed deployment CAS-203 blocks new attendance after actualEndDate while employee EMP-017 remains Active in Orbyx HRMS.',
       actual: 'Post-closure attendance blocked; historical corrections permitted; employee company status remains Active.',
       details: 'Verified closeAssignment() and getActiveEmployeeDeploymentForDate().'
     });

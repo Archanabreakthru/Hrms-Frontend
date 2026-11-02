@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, subscribeToDB } from '../../db/storage';
+import { Avatar } from '../common/Avatar';
 import { Employee, CompanyProfile } from '../../types/hrms';
 import { useAuth } from '../../services/authContext';
 import { hrmsService } from '../../services/hrmsService';
@@ -101,11 +102,11 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
       actorRole: currentUser.role,
       action: 'UPDATE',
       module: 'EMPLOYEE',
-      entityId: 'EMP-001',
+      entityId: 'EMP-000',
       entityName: 'MD Governance Oversight',
       description:
         govMode === 'None'
-          ? 'Configured Managing Director (EMP-001) at top of operational hierarchy (no external Chairman/Board configured)'
+          ? 'Configured Managing Director (EMP-000) at top of operational hierarchy (no external Chairman/Board configured)'
           : `Configured MD governance oversight under ${govMode}: ${govName.trim() || govMode}`
     });
     setShowGovernanceModal(false);
@@ -157,7 +158,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
     const desig = designations.find((d) => d.id === emp.designationId);
     const dept = departments.find((d) => d.id === emp.departmentId);
     const isCollapsed = collapsedIds.has(emp.id);
-    const isTopMD = emp.id === 'EMP-001';
+    const isTopMD = emp.id === 'EMP-000' || emp.id === 'EMP-010';
 
     return (
       <div key={emp.id} className="relative pl-6 pb-4">
@@ -219,7 +220,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
                     <span>Governance</span>
                   </button>
                 )}
-                {isHR && emp.id !== 'EMP-001' && (
+                {isHR && emp.id !== 'EMP-000' && emp.id !== 'EMP-010' && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -383,7 +384,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
             </div>
 
             <p className="text-slate-600 leading-relaxed">
-              Configure how the Managing Director (EMP-001) is positioned at the top of the hierarchy. Governance oversight is distinguished from ordinary employee operational reporting.
+              Configure how the Managing Director (EMP-000) is positioned at the top of the hierarchy. Governance oversight is distinguished from ordinary employee operational reporting.
             </p>
 
             <div>

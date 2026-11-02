@@ -115,13 +115,57 @@ export type DocumentCategory =
   | 'Professional Certificate'
   | 'Offer Letter'
   | 'Appointment Letter'
+  | 'Joining Documents'
+  | 'Government ID Proof'
+  | 'PAN Card'
   | 'Address Proof'
   | 'Tax Form'
   | 'Contract'
   | 'Statutory & Tax'
   | 'Performance & Appraisal'
+  | 'Appraisal & Promotion Letter'
+  | 'Previous Employment Documents'
   | 'Exit & Clearance'
-  | 'Degree';
+  | 'Degree'
+  | 'Other Organization Documents';
+
+export type ServiceRecordType =
+  | 'Offer Letter Issued'
+  | 'Appointment Letter Issued'
+  | 'Date of Joining'
+  | 'Employment Confirmation'
+  | 'Probation Completion'
+  | 'Promotion'
+  | 'Designation Change'
+  | 'Department Transfer'
+  | 'Reporting Manager Change'
+  | 'Salary Revision'
+  | 'Branch Transfer'
+  | 'Employment Status Change'
+  | 'Years of Service / Work Anniversary'
+  | 'Resignation / Termination';
+
+export interface ServiceRecord {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  recordType: ServiceRecordType;
+  effectiveDate: string;
+  previousDesignation?: string;
+  newDesignation?: string;
+  previousDepartment?: string;
+  newDepartment?: string;
+  previousReportingManager?: string;
+  newReportingManager?: string;
+  previousSalary?: number;
+  revisedSalary?: number;
+  description?: string;
+  supportingDocument?: string;
+  createdBy: string;
+  approvedBy?: string;
+  createdDate: string;
+  approvalStatus: 'Approved' | 'Pending' | 'Rejected';
+}
 
 export interface EmployeeDocument {
   id: string;
@@ -148,11 +192,20 @@ export type Permission =
   | 'employee.profile.read_all'
   | 'employee.profile.read_org'
   | 'employee.profile.read_sensitive'
+  | 'employee.profile.edit_personal'
+  | 'employee.profile.edit_employment'
+  | 'employee.profile.edit_reporting'
   | 'employee.documents.read_team'
   | 'employee.documents.read_all'
+  | 'employee.documents.manage'
+  | 'employee.documents.verify'
   | 'employee.salary.read'
+  | 'employee.salary.edit'
   | 'employee.bank_details.read'
+  | 'employee.bank_details.edit'
   | 'employee.identity_documents.read'
+  | 'employee.service_records.manage'
+  | 'employee.service_records.approve'
   | 'employee.leave.read_team'
   | 'employee.attendance.read_team'
   | 'employee.expenses.read_team'
@@ -201,6 +254,8 @@ export interface Employee {
   bloodGroup?: string;
   maritalStatus?: 'Single' | 'Married' | 'Other';
   address: string;
+  currentAddress?: string;
+  permanentAddress?: string;
   emergencyContact: {
     name: string;
     relationship: string;
@@ -212,6 +267,9 @@ export interface Employee {
   branchId: string;
   employmentType: EmploymentType;
   status: EmploymentStatus;
+  profileStatus?: 'Draft' | 'Profile Incomplete' | 'Pending Verification' | 'Active' | 'Inactive';
+  employeeCategory?: string;
+  probationPeriodDays?: number;
   dateOfJoining: string;
   probationEndDate?: string;
   confirmationDate?: string;
@@ -931,5 +989,6 @@ export interface NavigationContext {
   employeeId?: string;
   highlightAction?: string;
 }
+
 
 

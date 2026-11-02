@@ -1,4 +1,5 @@
 import {
+  ServiceRecord,
   CompanyProfile,
   Branch,
   Department,
@@ -46,7 +47,8 @@ import {
   initialPayrollRuns,
   initialPayrollLineItems,
   initialAuditLogs,
-  initialNotifications
+  initialNotifications,
+  initialServiceRecords
 } from './initialData';
 import { seedRealisticDemoRequests } from './demoDataSeeder';
 
@@ -542,18 +544,18 @@ export function initDatabase(): void {
   if (!localStorage.getItem(DB_PREFIX + 'initialized')) {
     resetToSeedData();
   } else {
-    // One-time migration to ensure EMP-000 (MD) photo matches his canonical executive portrait if still using old seed string
     try {
       const emps = getItem<Employee[]>('employees', initialEmployees);
-      const mdIdx = emps.findIndex((e) => e.id === 'EMP-000');
-      if (
-        mdIdx >= 0 &&
-        emps[mdIdx].avatarUrl ===
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'
-      ) {
-        emps[mdIdx].avatarUrl =
-          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80';
-        localStorage.setItem(DB_PREFIX + 'employees', JSON.stringify(emps));
+      const hasDummy = emps.some((e) => e.id === 'EMP-001' && (e.firstName === 'Anamika' || !e.firstName));
+      const hasCOO = emps.some((e) => e.id === 'EMP-010');
+      if (hasDummy || !hasCOO) {
+        const customEmps = emps.filter((e) => {
+          const num = parseInt(e.id.replace('EMP-', ''), 10);
+          return num > 17;
+        });
+        const merged = [...initialEmployees, ...customEmps];
+        setItem('employees', merged);
+        setItem('serviceRecords', initialServiceRecords);
       }
     } catch {
       // ignore
@@ -573,6 +575,7 @@ export function resetToSeedData(): void {
   localStorage.setItem(DB_PREFIX + 'salaryComponents', JSON.stringify(initialSalaryComponents));
   localStorage.setItem(DB_PREFIX + 'salaryStructures', JSON.stringify(initialSalaryStructures));
   localStorage.setItem(DB_PREFIX + 'employees', JSON.stringify(initialEmployees));
+  localStorage.setItem(DB_PREFIX + 'serviceRecords', JSON.stringify(initialServiceRecords));
   localStorage.setItem(DB_PREFIX + 'leaveApplications', JSON.stringify(initialLeaveApplications));
   localStorage.setItem(DB_PREFIX + 'expenseCategories', JSON.stringify(initialExpenseCategories));
   localStorage.setItem(DB_PREFIX + 'expenseClaims', JSON.stringify(initialExpenseClaims));
@@ -689,6 +692,23 @@ export const db = {
     if (idx >= 0) list[idx] = emp;
     else list.push(emp);
     setItem('employees', list);
+  },
+
+  // Service Records
+  getServiceRecords(): ServiceRecord[] {
+    return getItem<ServiceRecord[]>('serviceRecords', initialServiceRecords);
+  },
+  getServiceRecordsByEmployeeId(employeeId: string): ServiceRecord[] {
+    return this.getServiceRecords()
+      .filter((r) => r.employeeId === employeeId)
+      .sort((a, b) => new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime());
+  },
+  saveServiceRecord(record: ServiceRecord): void {
+    const list = this.getServiceRecords();
+    const idx = list.findIndex((r) => r.id === record.id);
+    if (idx >= 0) list[idx] = record;
+    else list.push(record);
+    setItem('serviceRecords', list);
   },
 
   // Shifts

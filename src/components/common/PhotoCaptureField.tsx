@@ -48,7 +48,7 @@ export const PhotoCaptureField: React.FC<PhotoCaptureFieldProps> = ({
       setTimeout(() => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play().catch(() => {});
+          videoRef.current.play().catch(() => { });
         }
       }, 50);
     } catch (err: any) {

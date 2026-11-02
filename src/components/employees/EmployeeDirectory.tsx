@@ -7,6 +7,7 @@ import { DataTable, Column } from '../common/DataTable';
 import { ExportButton } from '../common/ExportButton';
 import { CsvImportModal } from '../common/CsvImportModal';
 import { PhotoCaptureField } from '../common/PhotoCaptureField';
+import { Avatar } from '../common/Avatar';
 import { EmployeeProfileModal } from './EmployeeProfileModal';
 import { NewEmployeeModal } from './NewEmployeeModal';
 import { OrgChart } from './OrgChart';
@@ -186,10 +187,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         sortable: true,
         cell: (emp: BasicDirectoryEmployee) => (
           <div className="flex items-center gap-3">
-            <img
+            <Avatar
               src={emp.avatarUrl}
-              alt={emp.firstName}
-              className="h-10 w-10 rounded-full object-cover ring-1 ring-slate-200"
+              firstName={emp.firstName}
+              lastName={emp.lastName}
+              size="md"
             />
             <div className="min-w-0">
               <div className="font-semibold text-slate-900 truncate">
@@ -248,10 +250,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           const desig = designations.find((d) => d.id === r.designationId);
           return (
             <div className="flex items-center gap-3">
-              <img
+              <Avatar
                 src={r.avatarUrl}
-                alt={r.firstName}
-                className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200"
+                firstName={r.firstName}
+                lastName={r.lastName}
+                size="sm"
               />
               <div className="min-w-0">
                 <div className="font-semibold text-slate-900 truncate flex items-center gap-2">
@@ -320,10 +323,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           const isClientDeployed = deployedEmpIds.has(emp.id);
           return (
             <div className="flex items-center gap-3">
-              <img
+              <Avatar
                 src={emp.avatarUrl}
-                alt={emp.firstName}
-                className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200"
+                firstName={emp.firstName}
+                lastName={emp.lastName}
+                size="sm"
               />
               <div className="min-w-0">
                 <div className="font-semibold text-slate-900 truncate flex items-center gap-1.5">
@@ -606,10 +610,12 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     className="p-4 rounded-xl border border-slate-200 hover:border-indigo-300 bg-white shadow-2xs transition-all flex flex-col justify-between gap-3"
                   >
                     <div className="flex items-start gap-3">
-                      <img
+                      <Avatar
                         src={rep.avatarUrl}
-                        alt={rep.firstName}
-                        className="h-12 w-12 rounded-full object-cover ring-2 ring-indigo-50 shrink-0"
+                        firstName={rep.firstName}
+                        lastName={rep.lastName}
+                        size="md"
+                        className="ring-2 ring-indigo-50"
                       />
                       <div className="min-w-0 flex-1 text-xs">
                         <div className="flex items-center justify-between gap-1">

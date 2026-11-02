@@ -115,45 +115,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({ onNavigate }
         </div>
       )}
 
-      {/* Managing Director (Senior Management) Executive Governance Banner */}
-      {isMD && (
-        <div className="bg-slate-900 text-white rounded-xl p-5 border border-slate-800 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[11px] font-semibold">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Managing Director · Executive Governance Console</span>
-            </div>
-            <h2 className="text-base font-bold text-white">
-              Organization-Wide Oversight & Payroll Sign-Off ({allEmployees.length} Active Staff)
-            </h2>
-            <p className="text-xs text-slate-400">
-              Latest Payroll Run ({latestRun?.periodLabel || 'October 2026'}):{' '}
-              <strong className="text-emerald-400">
-                ₹{latestRun ? latestRun.totalNetPay.toLocaleString('en-IN') : '0'}
-              </strong>{' '}
-              ({latestRun?.status || 'Draft'})
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onNavigate('payroll', { subTab: 'runs' })}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors"
-            >
-              <CreditCard className="h-3.5 w-3.5" />
-              <span>Review & Approve Payroll</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('reports')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold rounded-lg transition-colors"
-            >
-              <BarChart3 className="h-3.5 w-3.5" />
-              <span>Executive Reports</span>
-            </button>
-          </div>
-        </div>
-      )}
+
 
       {/* Team / Executive Metric Cards — Every Card Navigates with Deep Context */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -186,8 +148,8 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({ onNavigate }
             pendingLeaves.length > 0
               ? onNavigate('leave', { subTab: 'approvals', statusFilter: 'Pending Approval' })
               : pendingExpenses.length > 0
-              ? onNavigate('expenses', { subTab: 'approvals', statusFilter: 'Pending Manager Approval' })
-              : onNavigate('attendance', { subTab: 'corrections', statusFilter: 'Pending' })
+                ? onNavigate('expenses', { subTab: 'approvals', statusFilter: 'Pending Manager Approval' })
+                : onNavigate('attendance', { subTab: 'corrections', statusFilter: 'Pending' })
           }
         />
         <StatCard
