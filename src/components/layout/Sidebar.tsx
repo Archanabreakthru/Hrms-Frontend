@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Building2,
   BriefcaseBusiness,
+  Award,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
@@ -22,6 +23,7 @@ export type NavTab =
   | 'dashboard'
   | 'organization'
   | 'employees'
+  | 'service_records'
   | 'clients'
   | 'leave'
   | 'payroll'
@@ -78,6 +80,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       label: 'Employee Setup',
       icon: Users,
       access: canAccessModule('hr')
+    },
+    {
+      id: 'service_records',
+      label: 'Service Records',
+      icon: Award,
+      access: canAccessModule('service_records')
     },
     {
       id: 'clients',

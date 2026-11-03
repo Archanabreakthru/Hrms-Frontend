@@ -4,94 +4,124 @@ export interface ProfileCompletenessResult {
   percentage: number;
   missingFields: string[];
   isComplete: boolean;
-  status: 'Draft' | 'Profile Incomplete' | 'Pending Verification' | 'Active' | 'Inactive';
+  status: 'Not Started' | 'In Progress' | 'Complete' | 'Draft' | 'Profile Incomplete' | 'Pending Verification' | 'Active' | 'Inactive';
 }
 
 /**
- * Calculates profile completeness score and identifies missing mandatory fields.
+ * Calculates dynamic profile completeness based on actual saved/entered employee information.
+ * Does not count default IDs, avatar placeholders, or sample data.
  */
 export function calculateProfileCompleteness(emp: Partial<Employee>): ProfileCompletenessResult {
   const missing: string[] = [];
   let totalScore = 0;
+  let populatedCount = 0;
+
+  // Meaningful user input checks (ignore default system dropdown selections until user provides actual personal/contact data)
+  const hasUserEnteredData = Boolean(
+    (emp.firstName && emp.firstName.trim() !== '') ||
+    (emp.lastName && emp.lastName.trim() !== '') ||
+    (emp.email && emp.email.trim() !== '' && !emp.email.startsWith('pending_')) ||
+    (emp.phone && emp.phone.trim() !== '' && emp.phone.trim() !== 'Pending') ||
+    (emp.address && emp.address.trim() !== '' && !emp.address.includes('Pending')) ||
+    (emp.panOrTaxNumber && emp.panOrTaxNumber.trim() !== '' && emp.panOrTaxNumber !== 'PENDING') ||
+    (emp.bankDetails?.accountNumber && emp.bankDetails.accountNumber !== 'PENDING')
+  );
 
   // Section 1: Personal & Contact (Weight: 30)
   if (!emp.firstName || emp.firstName.trim() === '') missing.push('First Name');
-  else totalScore += 5;
+  else { totalScore += 5; populatedCount++; }
 
   if (!emp.lastName || emp.lastName.trim() === '') missing.push('Last Name');
-  else totalScore += 5;
+  else { totalScore += 5; populatedCount++; }
 
-  if (!emp.email || emp.email.trim() === '') missing.push('Official Email');
-  else totalScore += 5;
+  if (!emp.email || emp.email.trim() === '' || emp.email.startsWith('pending_')) missing.push('Official Email');
+  else { totalScore += 5; populatedCount++; }
 
-  if (!emp.phone || emp.phone.trim() === '') missing.push('Mobile Number');
-  else totalScore += 5;
+  if (!emp.phone || emp.phone.trim() === '' || emp.phone === 'Pending') missing.push('Mobile Number');
+  else { totalScore += 5; populatedCount++; }
 
   if (!emp.dateOfBirth) missing.push('Date of Birth');
-  else totalScore += 3;
+  else { totalScore += 3; populatedCount++; }
 
   if (!emp.gender) missing.push('Gender');
-  else totalScore += 2;
+  else { totalScore += 2; }
 
   if (!emp.bloodGroup) missing.push('Blood Group');
-  else totalScore += 2;
+  else { totalScore += 2; }
 
-  if (!emp.address || emp.address.trim() === '') missing.push('Permanent Address');
-  else totalScore += 3;
+  if (!emp.address || emp.address.trim() === '' || emp.address.includes('Pending')) missing.push('Permanent Address');
+  else { totalScore += 3; populatedCount++; }
 
   // Section 2: Employment Details (Weight: 25)
   if (!emp.departmentId) missing.push('Department');
-  else totalScore += 5;
+  else { totalScore += 5; }
 
   if (!emp.designationId) missing.push('Designation');
-  else totalScore += 5;
+  else { totalScore += 5; }
 
   if (!emp.branchId) missing.push('Branch Location');
-  else totalScore += 5;
+  else { totalScore += 5; }
 
   if (!emp.dateOfJoining) missing.push('Date of Joining');
-  else totalScore += 5;
+  else { totalScore += 5; populatedCount++; }
 
   if (!emp.employmentType) missing.push('Employment Type');
-  else totalScore += 5;
+  else { totalScore += 5; }
 
   // Section 3: Salary & Banking Details (Weight: 25)
-  if (!emp.bankDetails?.bankName) missing.push('Bank Name');
-  else totalScore += 5;
+  const isBankPending = !emp.bankDetails?.bankName || emp.bankDetails.bankName === 'Pending Collection';
+  if (isBankPending) missing.push('Bank Name');
+  else { totalScore += 5; populatedCount++; }
 
-  if (!emp.bankDetails?.accountNumber) missing.push('Bank Account Number');
-  else totalScore += 5;
+  const isAccountPending = !emp.bankDetails?.accountNumber || emp.bankDetails.accountNumber === 'PENDING';
+  if (isAccountPending) missing.push('Bank Account Number');
+  else { totalScore += 5; populatedCount++; }
 
-  if (!emp.bankDetails?.ifscOrRouting) missing.push('IFSC Code');
-  else totalScore += 5;
+  const isIfscPending = !emp.bankDetails?.ifscOrRouting || emp.bankDetails.ifscOrRouting === 'PENDING';
+  if (isIfscPending) missing.push('IFSC Code');
+  else { totalScore += 5; populatedCount++; }
 
-  if (!emp.panOrTaxNumber || emp.panOrTaxNumber.trim() === '') missing.push('PAN / Tax ID');
-  else totalScore += 5;
+  const isPanPending = !emp.panOrTaxNumber || emp.panOrTaxNumber.trim() === '' || emp.panOrTaxNumber === 'PENDING';
+  if (isPanPending) missing.push('PAN / Tax ID');
+  else { totalScore += 5; populatedCount++; }
 
   if (!emp.baseSalaryAnnual || emp.baseSalaryAnnual <= 0) missing.push('Annual CTC / Salary');
-  else totalScore += 5;
+  else { totalScore += 5; populatedCount++; }
 
   // Section 4: Emergency Contact & Statutory (Weight: 20)
-  if (!emp.emergencyContact?.name || !emp.emergencyContact?.phone) {
+  if (!emp.emergencyContact?.name || !emp.emergencyContact?.phone || emp.emergencyContact?.name.trim() === '' || emp.emergencyContact?.name.includes('Pending')) {
     missing.push('Emergency Contact Details');
   } else {
     totalScore += 10;
+    populatedCount++;
   }
 
   // Statutory checks (EPF / ESI / PT)
   if (emp.epfApplicable !== undefined) totalScore += 5;
   if (emp.ptApplicable !== undefined) totalScore += 5;
 
+  // If no user-entered data has been provided, completeness is strictly 0% / Not Started
+  if (!hasUserEnteredData) {
+    return {
+      percentage: 0,
+      missingFields: missing,
+      isComplete: false,
+      status: 'Not Started'
+    };
+  }
+
   const percentage = Math.min(100, Math.round(totalScore));
   const isComplete = missing.length === 0;
 
-  let derivedStatus: 'Draft' | 'Profile Incomplete' | 'Pending Verification' | 'Active' | 'Inactive' = 'Active';
+  let derivedStatus: 'Not Started' | 'In Progress' | 'Complete' | 'Draft' | 'Profile Incomplete' | 'Pending Verification' | 'Active' | 'Inactive' = 'In Progress';
   if (emp.status === 'Inactive' || emp.status === 'Separated') {
     derivedStatus = 'Inactive';
   } else if (emp.profileStatus === 'Draft') {
     derivedStatus = 'Draft';
+  } else if (isComplete && percentage >= 95) {
+    derivedStatus = 'Complete';
   } else if (!isComplete || percentage < 85) {
-    derivedStatus = 'Profile Incomplete';
+    derivedStatus = 'In Progress';
   } else if (emp.profileStatus === 'Pending Verification') {
     derivedStatus = 'Pending Verification';
   } else {

@@ -38,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate }) => {
     dashboard: { title: 'Executive Overview', subtitle: 'Workforce operational metrics and daily status' },
     organization: { title: 'Organization Setup', subtitle: 'Legal entity, branches, departments, designations & governance structure' },
     employees: { title: 'Employee Setup', subtitle: 'Employee directory, my reportees & reporting hierarchy' },
+    service_records: { title: 'Service Records & Milestones', subtitle: 'Career milestones, appointments, confirmations, promotions, transfers & work anniversaries' },
     clients: { title: 'Client Management', subtitle: 'Client organizations, employee deployments, assignment lifecycle & 2-stage attendance verification' },
     leave: { title: 'Leave & Absence Management', subtitle: 'Leave applications, approvals, balance ledgers & calendar' },
     attendance: { title: 'Shifts & Attendance', subtitle: 'Check-in/check-out station, manual attendance entries, corrections & shift schedules' },

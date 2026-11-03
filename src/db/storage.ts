@@ -25,7 +25,8 @@ import {
   GovernanceHistoryEntry,
   ClientEmailConfirmation,
   PolicyAcknowledgement,
-  DelegationRecord
+  DelegationRecord,
+  InsurancePolicyRecord
 } from '../types/hrms';
 import {
   initialCompanyProfile,
@@ -546,16 +547,65 @@ export function initDatabase(): void {
   } else {
     try {
       const emps = getItem<Employee[]>('employees', initialEmployees);
-      const hasDummy = emps.some((e) => e.id === 'EMP-001' && (e.firstName === 'Anamika' || !e.firstName));
-      const hasCOO = emps.some((e) => e.id === 'EMP-010');
-      if (hasDummy || !hasCOO) {
-        const customEmps = emps.filter((e) => {
-          const num = parseInt(e.id.replace('EMP-', ''), 10);
-          return num > 17;
+      // Migration to standardized designation-based IDs
+      const hasOldIdFormat = emps.some((e) => e.id.match(/^EMP-\d{3}$/));
+      const hasDummy = emps.some((e) => (e.id === 'EMP-001' || e.id === 'EMP-HRM-0012') && (e.firstName === 'Anamika' || !e.firstName));
+      if (hasOldIdFormat || hasDummy) {
+        // Automatically migrate existing stored records to designation-based IDs
+        const mapping: Record<string, string> = {
+          'EMP-000': 'EMP-MD-0001',
+          'EMP-010': 'EMP-STF-0002',
+          'EMP-002': 'EMP-SDM-0003',
+          'EMP-003': 'EMP-SWE-0004',
+          'EMP-011': 'EMP-SWE-0005',
+          'EMP-012': 'EMP-SWE-0006',
+          'EMP-004': 'EMP-SWE-0007',
+          'EMP-015': 'EMP-SWE-0008',
+          'EMP-014': 'EMP-SWE-0009',
+          'EMP-013': 'EMP-SWE-0010',
+          'EMP-016': 'EMP-SWE-0011',
+          'EMP-001': 'EMP-HRM-0012',
+          'EMP-017': 'EMP-FAC-0013',
+          'EMP-018': 'EMP-DEVOPS-0014'
+        };
+
+        const migratedEmps = emps.map((emp) => {
+          const newId = mapping[emp.id] || emp.id;
+          const newMgrId = emp.reportingManagerId ? (mapping[emp.reportingManagerId] || emp.reportingManagerId) : undefined;
+          return {
+            ...emp,
+            id: newId,
+            originalLegacyId: emp.originalLegacyId || (mapping[emp.id] ? emp.id : undefined),
+            reportingManagerId: newMgrId
+          };
         });
-        const merged = [...initialEmployees, ...customEmps];
-        setItem('employees', merged);
+
+        // Ensure canonical records are present if list was empty
+        const merged = migratedEmps.length >= initialEmployees.length ? migratedEmps : initialEmployees;
+        // Ensure relationships match updated organization structure:
+        // S. Kannan (EMP-STF-0002) -> Raseedh (EMP-HRM-0012) & Bhava Dharani (EMP-DEVOPS-0014)
+        // Raseedh (EMP-HRM-0012) -> Gowtham (EMP-FAC-0013)
+        const reconciledEmps = merged.map((emp) => {
+          if (emp.id === 'EMP-FAC-0013' || emp.originalLegacyId === 'EMP-017') {
+            return { ...emp, reportingManagerId: 'EMP-HRM-0012' };
+          }
+          if (emp.id === 'EMP-HRM-0012' || emp.originalLegacyId === 'EMP-001') {
+            return { ...emp, reportingManagerId: 'EMP-STF-0002' };
+          }
+          return emp;
+        });
+
+        // Ensure Bhava Dharani is present
+        const hasBhava = reconciledEmps.some((e) => e.id === 'EMP-DEVOPS-0014' || e.firstName.includes('Bhava'));
+        if (!hasBhava) {
+          const bhavaFromInitial = initialEmployees.find((e) => e.id === 'EMP-DEVOPS-0014');
+          if (bhavaFromInitial) reconciledEmps.push(bhavaFromInitial);
+        }
+
+        setItem('employees', reconciledEmps);
         setItem('serviceRecords', initialServiceRecords);
+        setItem('designations', initialDesignations);
+        setItem('departments', initialDepartments);
       }
     } catch {
       // ignore
@@ -681,7 +731,8 @@ export const db = {
     return getItem<Employee[]>('employees', initialEmployees);
   },
   getEmployeeById(id: string): Employee | undefined {
-    return this.getEmployees().find((e) => e.id === id);
+    if (!id) return undefined;
+    return this.getEmployees().find((e) => e.id === id || e.originalLegacyId === id);
   },
   getEmployeeByUserId(userId: string): Employee | undefined {
     return this.getEmployees().find((e) => e.userId === userId);
@@ -1030,6 +1081,26 @@ export const db = {
     if (idx >= 0) list[idx] = del;
     else list.unshift(del);
     setItem('delegations', list);
+  },
+
+  // Insurance Policies & Nominees
+  getInsurancePolicies(): InsurancePolicyRecord[] {
+    return getItem<InsurancePolicyRecord[]>('insurancePolicies', []);
+  },
+  getInsurancePoliciesByEmployeeId(employeeId: string): InsurancePolicyRecord[] {
+    const all = this.getInsurancePolicies();
+    return all.filter((p) => p.employeeId === employeeId);
+  },
+  saveInsurancePolicy(policy: InsurancePolicyRecord): void {
+    const list = this.getInsurancePolicies();
+    const idx = list.findIndex((p) => p.id === policy.id);
+    if (idx >= 0) list[idx] = policy;
+    else list.unshift(policy);
+    setItem('insurancePolicies', list);
+  },
+  deleteInsurancePolicy(policyId: string): void {
+    const list = this.getInsurancePolicies().filter((p) => p.id !== policyId);
+    setItem('insurancePolicies', list);
   }
 };
 

@@ -78,20 +78,23 @@ export const initialDepartments: Department[] = [
   { id: 'DEP-PRD', name: 'Product & Design', code: 'PRD', headEmployeeId: 'EMP-003', description: 'Product architecture and design systems' },
   { id: 'DEP-HR', name: 'People & Culture', code: 'HR', headEmployeeId: 'EMP-001', description: 'Talent operations, recruitment, payroll and HR policies' },
   { id: 'DEP-FIN', name: 'Finance & Accounts', code: 'FIN', headEmployeeId: 'EMP-006', description: 'Financial planning, statutory compliance and payouts' },
-  { id: 'DEP-SALES', name: 'Sales & Client Solutions', code: 'SALES', headEmployeeId: 'EMP-009', description: 'Enterprise solution sales and client relationships' }
+  { id: 'DEP-SALES', name: 'Sales & Client Solutions', code: 'SALES', headEmployeeId: 'EMP-009', description: 'Enterprise solution sales and client relationships' },
+  { id: 'DEP-FAC', name: 'Facilities & Workplace', code: 'FAC', headEmployeeId: 'EMP-017', description: 'Office management, security, infrastructure and workplace administration' }
 ];
 
 export const initialDesignations: Designation[] = [
   { id: 'DES-MD', title: 'Managing Director (MD)', code: 'MD-01', departmentId: 'DEP-EXEC', level: 'Executive' },
-  { id: 'DES-HR-MGR', title: 'HR Manager & People Ops Lead', code: 'HR-01', departmentId: 'DEP-HR', level: 'Senior' },
-  { id: 'DES-ENG-MGR', title: 'Senior Delivery Manager', code: 'SDM-01', departmentId: 'DEP-ENG', level: 'Lead' },
+  { id: 'DES-COO', title: 'Chief Operating Officer (COO)', code: 'STF', departmentId: 'DEP-EXEC', level: 'Executive' },
+  { id: 'DES-HR-MGR', title: 'HR Manager & People Ops Lead', code: 'HRM', departmentId: 'DEP-HR', level: 'Senior' },
+  { id: 'DES-ENG-MGR', title: 'Senior Delivery Manager', code: 'SDM', departmentId: 'DEP-ENG', level: 'Lead' },
   { id: 'DES-SWE', title: 'Software Engineer', code: 'SWE', departmentId: 'DEP-ENG', level: 'Mid' },
   { id: 'DES-DES-LEAD', title: 'Software Engineer', code: 'SWE-II', departmentId: 'DEP-ENG', level: 'Mid' },
   { id: 'DES-JR-ENG', title: 'Software Engineer', code: 'SWE-I', departmentId: 'DEP-ENG', level: 'Junior' },
   { id: 'DES-SR-ENG', title: 'Senior Backend Engineer', code: 'SWE-III', departmentId: 'DEP-ENG', level: 'Senior' },
   { id: 'DES-FIN-SPEC', title: 'Senior Finance Specialist', code: 'FIN-02', departmentId: 'DEP-FIN', level: 'Senior' },
   { id: 'DES-DEVOPS', title: 'DevOps & Cloud Engineer', code: 'DEVOPS-II', departmentId: 'DEP-ENG', level: 'Mid' },
-  { id: 'DES-FRONTEND', title: 'Frontend Engineer', code: 'SWE-II', departmentId: 'DEP-ENG', level: 'Mid' }
+  { id: 'DES-FRONTEND', title: 'Frontend Engineer', code: 'SWE-II', departmentId: 'DEP-ENG', level: 'Mid' },
+  { id: 'DES-FAC-MGR', title: 'Facility Manager', code: 'FAC', departmentId: 'DEP-FAC', level: 'Mid' }
 ];
 
 export const initialShifts: ShiftDefinition[] = [

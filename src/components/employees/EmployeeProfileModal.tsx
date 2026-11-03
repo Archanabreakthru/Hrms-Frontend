@@ -3,7 +3,15 @@ import { Modal } from '../common/Modal';
 import { PhotoCaptureField } from '../common/PhotoCaptureField';
 import { Avatar } from '../common/Avatar';
 import { calculateProfileCompleteness, calculateServiceYears } from '../../utils/profileUtils';
-import { Employee, BasicDirectoryEmployee, ServiceRecord, ServiceRecordType } from '../../types/hrms';
+import {
+  Employee,
+  BasicDirectoryEmployee,
+  InsurancePolicyRecord,
+  InsuranceNominee,
+  InsuranceDependent,
+  InsurancePolicyCategory,
+  InsurancePolicyStatus
+} from '../../types/hrms';
 import { db } from '../../db/storage';
 import { useAuth } from '../../services/authContext';
 import { permissionService } from '../../services/permissionService';
@@ -33,7 +41,9 @@ import {
   Edit2,
   X,
   AlertTriangle,
-  AlertCircle
+  AlertCircle,
+  HeartPulse,
+  Download
 } from 'lucide-react';
 
 interface EmployeeProfileModalProps {
@@ -46,8 +56,8 @@ type ProfileTab =
   | 'personal'
   | 'employment'
   | 'organization'
-  | 'service'
   | 'documents'
+  | 'insurance'
   | 'leave'
   | 'attendance'
   | 'expenses'
@@ -79,6 +89,46 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   const [docIssueDate, setDocIssueDate] = useState('');
   const [docExpiryDate, setDocExpiryDate] = useState('');
   const [docCategoryFilter, setDocCategoryFilter] = useState('All');
+  const [docUploadFile, setDocUploadFile] = useState<{ name: string; size: string; dataUrl: string } | null>(null);
+  const [docUploadError, setDocUploadError] = useState<string | null>(null);
+  const profileDocInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  // Insurance & Nominees State
+  const [showAddPolicyModal, setShowAddPolicyModal] = useState(false);
+  const [policyType, setPolicyType] = useState<InsurancePolicyCategory>('Group Medical Insurance');
+  const [policyProvider, setPolicyProvider] = useState('Star Health & Allied Insurance');
+  const [policyName, setPolicyName] = useState('Orbyx Corporate Group Health Shield');
+  const [policyNumber, setPolicyNumber] = useState('SH-CORP-2026-9921');
+  const [groupPolicyNumber, setGroupPolicyNumber] = useState('GRP-ORBYX-01');
+  const [membershipNumber, setMembershipNumber] = useState('');
+  const [policyStartDate, setPolicyStartDate] = useState('2026-04-01');
+  const [policyEndDate, setPolicyEndDate] = useState('2027-03-31');
+  const [coverageAmount, setCoverageAmount] = useState(500000);
+  const [coverageType, setCoverageType] = useState<'Self Only' | 'Self + Spouse' | 'Self + Family' | 'Parents Coverage'>('Self + Family');
+  const [policyStatus, setPolicyStatus] = useState<InsurancePolicyStatus>('Enrolled');
+  const [policyError, setPolicyError] = useState<string | null>(null);
+  const [policySuccess, setPolicySuccess] = useState<string | null>(null);
+
+  // Nominees in form
+  const [formNominees, setFormNominees] = useState<InsuranceNominee[]>([
+    {
+      id: 'NOM-1',
+      fullName: '',
+      relationship: 'Spouse',
+      dateOfBirth: '1995-05-15',
+      mobileNumber: '',
+      sharePercentage: 100,
+      isMinor: false
+    }
+  ]);
+
+  // Dependents in form
+  const [formDependents, setFormDependents] = useState<InsuranceDependent[]>([]);
+
+  // Policy doc upload
+  const [policyDocBlob, setPolicyDocBlob] = useState<{ name: string; size: string; dataUrl: string } | null>(null);
+  const policyDocInputRef = React.useRef<HTMLInputElement | null>(null);
+
   const [previewDoc, setPreviewDoc] = useState<{
     id: string;
     title: string;
@@ -88,23 +138,13 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     expiryDate?: string;
     status: 'Verified' | 'Pending' | 'Rejected';
     uploadedBy: string;
+    fileUrl?: string;
+    fileName?: string;
+    fileSize?: string;
   } | null>(null);
   const [, setDocRefresh] = useState(0);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [showPhotoUpdater, setShowPhotoUpdater] = useState(false);
-  const [showAddServiceModal, setShowAddServiceModal] = useState(false);
-  const [srType, setSrType] = useState<ServiceRecordType>('Promotion');
-  const [srEffectiveDate, setSrEffectiveDate] = useState(new Date().toISOString().split('T')[0]);
-  const [srPrevDesig, setSrPrevDesig] = useState('');
-  const [srNewDesig, setSrNewDesig] = useState('');
-  const [srPrevDept, setSrPrevDept] = useState('');
-  const [srNewDept, setSrNewDept] = useState('');
-  const [srPrevManager, setSrPrevManager] = useState('');
-  const [srNewManager, setSrNewManager] = useState('');
-  const [srPrevSalary, setSrPrevSalary] = useState<number | ''>('');
-  const [srRevisedSalary, setSrRevisedSalary] = useState<number | ''>('');
-  const [srRemarks, setSrRemarks] = useState('');
-  const [srSuccessNotice, setSrSuccessNotice] = useState('');
   const [editFirstName, setEditFirstName] = useState('');
   const [editLastName, setEditLastName] = useState('');
   const [nameSavedNotice, setNameSavedNotice] = useState('');
@@ -308,8 +348,8 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     { id: 'personal', label: 'Personal', icon: User },
     { id: 'employment', label: 'Employment', icon: Briefcase },
     { id: 'organization', label: 'Org & Reporting', icon: GitFork },
-    { id: 'service', label: 'Service Records', icon: Award },
     { id: 'documents', label: 'Documents', icon: FileText },
+    { id: 'insurance', label: 'Insurance & Nominees', icon: HeartPulse },
     { id: 'leave', label: 'Leave History', icon: Calendar },
     { id: 'attendance', label: 'Attendance', icon: Clock },
     { id: 'expenses', label: 'Expenses', icon: Receipt },
@@ -335,6 +375,9 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     expiryDate: string;
     status: 'Verified' | 'Pending' | 'Rejected';
     uploadedBy: string;
+    fileUrl?: string;
+    fileName?: string;
+    fileSize?: string;
   };
 
   const docStorageKey = `orbyx_extra_docs_${full.id}`;
@@ -391,16 +434,24 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
 
   const handleMockDocUpload = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!docUploadTitle.trim()) return;
-    const newDoc = {
+    setDocUploadError(null);
+    if (!docUploadTitle.trim() && !docUploadFile) {
+      setDocUploadError('Please specify document title and attach a document file.');
+      return;
+    }
+    const finalTitle = docUploadTitle.trim() || docUploadFile?.name || `${docType} Document`;
+    const newDoc: VaultDoc = {
       id: `DOC-${full.id}-${Date.now()}`,
-      title: docUploadTitle.trim().endsWith('.pdf') ? docUploadTitle.trim() : `${docUploadTitle.trim()}.pdf`,
+      title: finalTitle.endsWith('.pdf') ? finalTitle : `${finalTitle}.pdf`,
       category: docType,
       uploadedAt: new Date().toISOString().split('T')[0],
       issueDate: docIssueDate || new Date().toISOString().split('T')[0],
       expiryDate: docExpiryDate || '',
       status: (isHR ? 'Verified' : 'Pending') as 'Verified' | 'Pending' | 'Rejected',
-      uploadedBy: `${currentUser.name} (${currentUser.role})`
+      uploadedBy: `${currentUser.name} (${currentUser.role})`,
+      fileName: docUploadFile?.name || `${finalTitle.replace(/\s+/g, '_')}.pdf`,
+      fileSize: docUploadFile?.size || '320 KB',
+      fileUrl: docUploadFile?.dataUrl
     };
     saveEmployeeDocs([newDoc, ...employeeDocs]);
     db.logAudit({
@@ -417,6 +468,8 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     setDocUploadTitle('');
     setDocIssueDate('');
     setDocExpiryDate('');
+    setDocUploadFile(null);
+    if (profileDocInputRef.current) profileDocInputRef.current.value = '';
     setTimeout(() => {
       setUploadSuccess(false);
     }, 2500);
@@ -450,8 +503,6 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   const canEditSalarySection = permissionService.canEditSalary(full.id, currentUser);
   const canManageDocs = permissionService.canManageDocuments(full.id, currentUser);
   const canVerifyDocs = permissionService.canVerifyDocuments(currentUser);
-  const canManageService = permissionService.canManageServiceRecords(full.id, currentUser);
-  const canApproveService = permissionService.canApproveServiceRecords(currentUser);
 
   // Initializers for Edit mode
   const startEditingPersonal = () => {
@@ -1423,480 +1474,6 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
             </div>
           )}
 
-          {/* TAB: SERVICE RECORDS (NEW FEATURE) */}
-          {activeTab === 'service' && (() => {
-            const serviceYears = calculateServiceYears(full.dateOfJoining);
-            const records = db.getServiceRecordsByEmployeeId(full.id);
-
-            const handleCreateServiceRecord = (e: React.FormEvent) => {
-              e.preventDefault();
-              const newRec: ServiceRecord = {
-                id: `SR-${full.id}-${Date.now()}`,
-                employeeId: full.id,
-                employeeName: `${full.firstName} ${full.lastName}`.trim(),
-                recordType: srType,
-                effectiveDate: srEffectiveDate,
-                previousDesignation: srPrevDesig || undefined,
-                newDesignation: srNewDesig || undefined,
-                previousDepartment: srPrevDept || undefined,
-                newDepartment: srNewDept || undefined,
-                previousReportingManager: srPrevManager || undefined,
-                newReportingManager: srNewManager || undefined,
-                previousSalary: srPrevSalary ? Number(srPrevSalary) : undefined,
-                revisedSalary: srRevisedSalary ? Number(srRevisedSalary) : undefined,
-                description: srRemarks || undefined,
-                createdBy: `${currentUser.name} (${currentUser.role})`,
-                approvedBy: isHR ? currentUser.name : undefined,
-                createdDate: new Date().toISOString().split('T')[0],
-                approvalStatus: isHR ? 'Approved' : 'Pending'
-              };
-
-              db.saveServiceRecord(newRec);
-
-              // If approved promotion, update employee profile designation
-              if (isHR && srNewDesig) {
-                const targetDesig = designations.find((d) => d.title.toLowerCase() === srNewDesig.toLowerCase());
-                if (targetDesig) {
-                  const rawEmp = db.getEmployeeById(full.id);
-                  if (rawEmp) {
-                    db.saveEmployee({ ...rawEmp, designationId: targetDesig.id });
-                  }
-                }
-              }
-
-              // If salary revision, update baseSalaryAnnual
-              if (isHR && srRevisedSalary) {
-                const rawEmp = db.getEmployeeById(full.id);
-                if (rawEmp) {
-                  db.saveEmployee({ ...rawEmp, baseSalaryAnnual: Number(srRevisedSalary) });
-                }
-              }
-
-              db.logAudit({
-                actorUserId: currentUser.id,
-                actorName: currentUser.name,
-                actorRole: currentUser.role,
-                module: 'EMPLOYEE',
-                action: 'CREATE',
-                entityId: full.id,
-                entityName: `${full.firstName} ${full.lastName}`,
-                description: `Created service history event "${srType}" effective ${srEffectiveDate} for ${full.id}`
-              });
-
-              setSrSuccessNotice(`Service record "${srType}" successfully saved!`);
-              setShowAddServiceModal(false);
-              setDocRefresh((n) => n + 1);
-              setTimeout(() => setSrSuccessNotice(''), 3000);
-            };
-
-            return (
-              <div className="space-y-4">
-                {/* Years of Service Summary Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-xl">
-                    <span className="text-[10px] uppercase font-bold text-indigo-700 tracking-wider block">
-                      Total Service Tenure
-                    </span>
-                    <span className="text-base font-extrabold text-indigo-950 mt-1 block">
-                      {serviceYears.displayText}
-                    </span>
-                    <span className="text-[11px] text-indigo-600/90 mt-0.5 block">
-                      Joining Date: <span className="font-semibold">{full.dateOfJoining}</span>
-                    </span>
-                  </div>
-
-                  <div className="p-3.5 bg-emerald-50/70 border border-emerald-100 rounded-xl">
-                    <span className="text-[10px] uppercase font-bold text-emerald-700 tracking-wider block">
-                      Completed Tenure
-                    </span>
-                    <span className="text-base font-extrabold text-emerald-950 mt-1 block">
-                      {serviceYears.totalYears} yrs, {serviceYears.completedMonths} mos
-                    </span>
-                    <span className="text-[11px] text-emerald-600/90 mt-0.5 block">
-                      {serviceYears.totalDays} Total Days of Association
-                    </span>
-                  </div>
-
-                  <div className="p-3.5 bg-amber-50/70 border border-amber-100 rounded-xl">
-                    <span className="text-[10px] uppercase font-bold text-amber-700 tracking-wider block">
-                      Next Work Anniversary
-                    </span>
-                    <span className="text-base font-extrabold text-amber-950 mt-1 block">
-                      {serviceYears.nextAnniversaryDate}
-                    </span>
-                    <span className="text-[11px] text-amber-700/90 mt-0.5 block">
-                      {serviceYears.daysUntilNextAnniversary} Days remaining
-                    </span>
-                  </div>
-                </div>
-
-                {srSuccessNotice && (
-                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold">
-                    {srSuccessNotice}
-                  </div>
-                )}
-
-                {/* Service History Header & Add Action */}
-                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                  <div>
-                    <h5 className="font-bold text-slate-900 text-xs">Employment Service Timeline & History</h5>
-                    <p className="text-[11px] text-slate-500">
-                      Chronological log of appointments, confirmations, promotions, transfers, and salary revisions
-                    </p>
-                  </div>
-                  {canManageService && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSrPrevDesig(desig?.title || '');
-                        setSrNewDesig('');
-                        setSrPrevDept(dept?.name || '');
-                        setSrNewDept('');
-                        setSrPrevManager(manager ? `${manager.firstName} ${manager.lastName}` : '');
-                        setSrNewManager('');
-                        setSrPrevSalary(full.baseSalaryAnnual || '');
-                        setSrRevisedSalary('');
-                        setSrRemarks('');
-                        setShowAddServiceModal(true);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs transition-colors"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      <span>Add Service Record</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* Timeline & Structured Records */}
-                {records.length === 0 ? (
-                  <div className="p-6 text-center rounded-xl border border-dashed border-slate-200 text-slate-400">
-                    No service history records logged yet for this employee.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {records.map((rec) => (
-                      <div
-                        key={rec.id}
-                        className="p-3.5 rounded-xl border border-slate-200 bg-white hover:border-indigo-200 transition-colors shadow-2xs space-y-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-900 text-xs">{rec.recordType}</span>
-                            <span
-                              className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
-                                rec.approvalStatus === 'Approved'
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                  : rec.approvalStatus === 'Rejected'
-                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                  : 'bg-amber-50 text-amber-700 border-amber-200'
-                              }`}
-                            >
-                              {rec.approvalStatus}
-                            </span>
-                          </div>
-                          <span className="font-mono text-slate-500 text-[11px] font-medium">
-                            Effective: {rec.effectiveDate}
-                          </span>
-                        </div>
-
-                        {/* Details Grid */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] bg-slate-50/70 p-2.5 rounded-lg border border-slate-100">
-                          {rec.newDesignation && (
-                            <div>
-                              <span className="text-slate-400 block">Designation:</span>
-                              <span className="font-semibold text-slate-800">
-                                {rec.previousDesignation ? `${rec.previousDesignation} → ` : ''}
-                                {rec.newDesignation}
-                              </span>
-                            </div>
-                          )}
-
-                          {rec.newDepartment && (
-                            <div>
-                              <span className="text-slate-400 block">Department:</span>
-                              <span className="font-semibold text-slate-800">
-                                {rec.previousDepartment ? `${rec.previousDepartment} → ` : ''}
-                                {rec.newDepartment}
-                              </span>
-                            </div>
-                          )}
-
-                          {rec.newReportingManager && (
-                            <div>
-                              <span className="text-slate-400 block">Reporting Manager:</span>
-                              <span className="font-semibold text-slate-800">
-                                {rec.previousReportingManager ? `${rec.previousReportingManager} → ` : ''}
-                                {rec.newReportingManager}
-                              </span>
-                            </div>
-                          )}
-
-                          {rec.revisedSalary && (
-                            <div>
-                              <span className="text-slate-400 block">Annual CTC:</span>
-                              <span className="font-semibold text-slate-800 font-mono">
-                                {rec.previousSalary ? `₹${rec.previousSalary.toLocaleString('en-IN')} → ` : ''}
-                                ₹{rec.revisedSalary.toLocaleString('en-IN')}
-                              </span>
-                            </div>
-                          )}
-
-                          {rec.description && (
-                            <div className="sm:col-span-2">
-                              <span className="text-slate-400 block">Remarks / Reason:</span>
-                              <span className="text-slate-700 italic">{rec.description}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
-                          <span>Recorded by {rec.createdBy}</span>
-                          <div className="flex items-center gap-2">
-                            {rec.approvedBy && <span>Approved by {rec.approvedBy}</span>}
-                            {canApproveService && rec.approvalStatus === 'Pending' && (
-                              <div className="flex items-center gap-1.5 ml-2">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const allRecs = db.getServiceRecords();
-                                    const updatedList = allRecs.map((r) =>
-                                      r.id === rec.id
-                                        ? { ...r, approvalStatus: 'Approved' as const, approvedBy: currentUser.name }
-                                        : r
-                                    );
-                                    localStorage.setItem('orbyx_hrms_v3_serviceRecords', JSON.stringify(updatedList));
-                                    db.logAudit({
-                                      actorUserId: currentUser.id,
-                                      actorName: currentUser.name,
-                                      actorRole: currentUser.role,
-                                      module: 'EMPLOYEE',
-                                      action: 'APPROVE',
-                                      entityId: full.id,
-                                      entityName: `${full.firstName} ${full.lastName}`,
-                                      description: `Approved service record "${rec.recordType}" (${rec.id}) for ${full.id}`
-                                    });
-                                    setDocRefresh((n) => n + 1);
-                                  }}
-                                  className="px-2 py-0.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded font-semibold text-[10px]"
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const allRecs = db.getServiceRecords();
-                                    const updatedList = allRecs.map((r) =>
-                                      r.id === rec.id
-                                        ? { ...r, approvalStatus: 'Rejected' as const, approvedBy: currentUser.name }
-                                        : r
-                                    );
-                                    localStorage.setItem('orbyx_hrms_v3_serviceRecords', JSON.stringify(updatedList));
-                                    db.logAudit({
-                                      actorUserId: currentUser.id,
-                                      actorName: currentUser.name,
-                                      actorRole: currentUser.role,
-                                      module: 'EMPLOYEE',
-                                      action: 'REJECT',
-                                      entityId: full.id,
-                                      entityName: `${full.firstName} ${full.lastName}`,
-                                      description: `Rejected service record "${rec.recordType}" (${rec.id}) for ${full.id}`
-                                    });
-                                    setDocRefresh((n) => n + 1);
-                                  }}
-                                  className="px-2 py-0.5 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded font-semibold text-[10px]"
-                                >
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Add Service Record Modal Form */}
-                {showAddServiceModal && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-                    <form
-                      onSubmit={handleCreateServiceRecord}
-                      className="bg-white rounded-xl max-w-lg w-full p-5 shadow-xl border border-slate-200 space-y-3.5 text-xs"
-                    >
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                        <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                          <Award className="h-4 w-4 text-indigo-600" />
-                          <span>Add Employment Service Record</span>
-                        </h4>
-                        <button
-                          type="button"
-                          onClick={() => setShowAddServiceModal(false)}
-                          className="text-slate-400 hover:text-slate-600"
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">Service Event Type *</label>
-                          <select
-                            value={srType}
-                            onChange={(e) => setSrType(e.target.value as ServiceRecordType)}
-                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                          >
-                            <option value="Offer Letter Issued">Offer Letter Issued</option>
-                            <option value="Appointment Letter Issued">Appointment Letter Issued</option>
-                            <option value="Date of Joining">Date of Joining</option>
-                            <option value="Employment Confirmation">Employment Confirmation</option>
-                            <option value="Probation Completion">Probation Completion</option>
-                            <option value="Promotion">Promotion</option>
-                            <option value="Designation Change">Designation Change</option>
-                            <option value="Department Transfer">Department Transfer</option>
-                            <option value="Reporting Manager Change">Reporting Manager Change</option>
-                            <option value="Salary Revision">Salary Revision</option>
-                            <option value="Branch Transfer">Branch Transfer</option>
-                            <option value="Employment Status Change">Employment Status Change</option>
-                            <option value="Years of Service / Work Anniversary">Work Anniversary</option>
-                            <option value="Resignation / Termination">Resignation / Termination</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">Effective Date *</label>
-                          <input
-                            type="date"
-                            required
-                            value={srEffectiveDate}
-                            onChange={(e) => setSrEffectiveDate(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                          />
-                        </div>
-                      </div>
-
-                      {(srType === 'Promotion' || srType === 'Designation Change') && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">Previous Designation</label>
-                            <input
-                              value={srPrevDesig}
-                              onChange={(e) => setSrPrevDesig(e.target.value)}
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                            />
-                          </div>
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">New Designation</label>
-                            <input
-                              value={srNewDesig}
-                              onChange={(e) => setSrNewDesig(e.target.value)}
-                              placeholder="e.g. Senior Software Engineer"
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {srType === 'Department Transfer' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">Previous Department</label>
-                            <input
-                              value={srPrevDept}
-                              onChange={(e) => setSrPrevDept(e.target.value)}
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                            />
-                          </div>
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">New Department</label>
-                            <input
-                              value={srNewDept}
-                              onChange={(e) => setSrNewDept(e.target.value)}
-                              placeholder="e.g. Engineering & Delivery"
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {srType === 'Reporting Manager Change' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">Previous Manager</label>
-                            <input
-                              value={srPrevManager}
-                              onChange={(e) => setSrPrevManager(e.target.value)}
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                            />
-                          </div>
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">New Manager</label>
-                            <input
-                              value={srNewManager}
-                              onChange={(e) => setSrNewManager(e.target.value)}
-                              placeholder="e.g. KrishaRaj"
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {srType === 'Salary Revision' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">Previous Annual CTC</label>
-                            <input
-                              type="number"
-                              value={srPrevSalary}
-                              onChange={(e) => setSrPrevSalary(e.target.value ? Number(e.target.value) : '')}
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
-                            />
-                          </div>
-                          <div>
-                            <label className="block font-medium text-slate-600 mb-1">Revised Annual CTC</label>
-                            <input
-                              type="number"
-                              value={srRevisedSalary}
-                              onChange={(e) => setSrRevisedSalary(e.target.value ? Number(e.target.value) : '')}
-                              placeholder="e.g. 1800000"
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      <div>
-                        <label className="block font-medium text-slate-700 mb-1">Remarks / Justification</label>
-                        <textarea
-                          rows={2}
-                          value={srRemarks}
-                          onChange={(e) => setSrRemarks(e.target.value)}
-                          placeholder="Event description, promotion notes, or approval references"
-                          className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
-                        />
-                      </div>
-
-                      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                        <button
-                          type="button"
-                          onClick={() => setShowAddServiceModal(false)}
-                          className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg"
-                        >
-                          Save Record
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
           {/* TAB: DOCUMENTS */}
           {activeTab === 'documents' && (
             <div className="space-y-4">
@@ -2036,7 +1613,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
               )}
 
               {previewDoc && (
-                <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-2">
+                <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-indigo-950 text-xs">Document Metadata & Preview: {previewDoc.title}</span>
                     <button
@@ -2067,22 +1644,91 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                       <span className="font-semibold text-indigo-700">{previewDoc.status}</span>
                     </div>
                   </div>
+
+                  {previewDoc.fileUrl && (
+                    <div className="p-3 bg-white rounded-lg border border-indigo-100 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-indigo-600" />
+                        <span className="text-xs font-semibold text-slate-800">{previewDoc.fileName || previewDoc.title}</span>
+                        {previewDoc.fileSize && <span className="text-[11px] text-slate-400">({previewDoc.fileSize})</span>}
+                      </div>
+                      <a
+                        href={previewDoc.fileUrl}
+                        download={previewDoc.fileName || `${previewDoc.title}.pdf`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-200"
+                      >
+                        <Download className="h-3 w-3" />
+                        <span>Download</span>
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
 
               {/* Upload Document Form */}
               {canManageDocs && (
                 <form onSubmit={handleMockDocUpload} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
-                  <p className="font-medium text-slate-800 text-xs">Upload Certificate / Employee Document</p>
+                  <p className="font-medium text-slate-800 text-xs">Upload Certificate / Employee Document to Vault</p>
+                  
+                  {docUploadError && (
+                    <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-1.5">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>{docUploadError}</span>
+                    </div>
+                  )}
+
+                  <input
+                    ref={profileDocInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
+                    onChange={(e) => {
+                      setDocUploadError(null);
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      const allowed = ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'xls', 'xlsx'];
+                      const ext = f.name.split('.').pop()?.toLowerCase() || '';
+                      if (!allowed.includes(ext)) {
+                        setDocUploadError(`Unsupported format .${ext}. Allowed: PDF, JPG, PNG, DOC, DOCX, XLS, XLSX`);
+                        e.target.value = '';
+                        return;
+                      }
+                      if (f.size > 10 * 1024 * 1024) {
+                        setDocUploadError(`File size exceeds 10MB limit (${(f.size / (1024 * 1024)).toFixed(2)} MB).`);
+                        e.target.value = '';
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const dataUrl = reader.result as string;
+                        const sz = f.size > 1024 * 1024 ? `${(f.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(f.size / 1024)} KB`;
+                        setDocUploadFile({ name: f.name, size: sz, dataUrl });
+                        if (!docUploadTitle.trim()) setDocUploadTitle(f.name);
+                      };
+                      reader.readAsDataURL(f);
+                    }}
+                    className="hidden"
+                  />
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={docUploadTitle}
-                      onChange={(e) => setDocUploadTitle(e.target.value)}
-                      placeholder="Document Title (e.g. AWS Solutions Architect Certificate)"
-                      className="px-3 py-1.5 bg-white border border-slate-200 rounded text-xs"
-                      required
-                    />
+                    <div>
+                      <input
+                        type="text"
+                        value={docUploadTitle}
+                        onChange={(e) => {
+                          setDocUploadTitle(e.target.value);
+                          setDocUploadError(null);
+                        }}
+                        placeholder="Document Title (e.g. AWS Solutions Architect Certificate)"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded text-xs"
+                        required
+                      />
+                      {docUploadFile && (
+                        <p className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1">
+                          <Check className="h-3 w-3" /> Attached: {docUploadFile.name} ({docUploadFile.size})
+                        </p>
+                      )}
+                    </div>
+
                     <select
                       value={docType}
                       onChange={(e) => setDocType(e.target.value as any)}
@@ -2098,6 +1744,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                       <option value="Performance & Appraisal">Performance & Appraisal</option>
                       <option value="Exit & Clearance">Exit & Clearance</option>
                     </select>
+
                     <div>
                       <label className="block text-[10px] text-slate-500 mb-0.5">Issue Date (Optional)</label>
                       <input
@@ -2117,18 +1764,27 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                       />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-slate-500">Persisted to Employee Document Vault (PDF, PNG, JPG)</span>
+
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => profileDocInputRef.current?.click()}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs font-semibold"
+                    >
+                      <Upload className="h-3 w-3 text-indigo-600" />
+                      <span>{docUploadFile ? 'Change File' : 'Attach Document File'}</span>
+                    </button>
+
                     <button
                       type="submit"
                       className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-semibold"
                     >
-                      <Upload className="h-3 w-3" />
+                      <CheckCircle2 className="h-3 w-3" />
                       Upload to Vault
                     </button>
                   </div>
                   {uploadSuccess && (
-                    <p className="text-[11px] text-emerald-700 flex items-center gap-1">
+                    <p className="text-[11px] text-emerald-700 flex items-center gap-1 font-semibold">
                       <CheckCircle2 className="h-3.5 w-3.5" />
                       Document uploaded and saved to employee record.
                     </p>
@@ -2137,6 +1793,716 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
               )}
             </div>
           )}
+
+          {/* TAB: INSURANCE & NOMINEES */}
+          {activeTab === 'insurance' && (() => {
+            const policies = db.getInsurancePoliciesByEmployeeId(full.id);
+            const canManageInsurance = isHR || isSelf;
+
+            const handleAddNominee = () => {
+              setFormNominees([
+                ...formNominees,
+                {
+                  id: `NOM-${Date.now()}`,
+                  fullName: '',
+                  relationship: 'Dependent',
+                  dateOfBirth: '2000-01-01',
+                  mobileNumber: '',
+                  sharePercentage: 0,
+                  isMinor: false
+                }
+              ]);
+            };
+
+            const handleRemoveNominee = (id: string) => {
+              setFormNominees(formNominees.filter((n) => n.id !== id));
+            };
+
+            const handleUpdateNominee = (id: string, patch: Partial<InsuranceNominee>) => {
+              setFormNominees(
+                formNominees.map((n) => {
+                  if (n.id !== id) return n;
+                  const updated = { ...n, ...patch };
+                  // Check if minor based on DOB
+                  if (updated.dateOfBirth) {
+                    const birth = new Date(updated.dateOfBirth).getTime();
+                    const ageYears = (Date.now() - birth) / (1000 * 60 * 60 * 24 * 365.25);
+                    updated.isMinor = ageYears < 18;
+                  }
+                  return updated;
+                })
+              );
+            };
+
+            const handleAddDependent = () => {
+              setFormDependents([
+                ...formDependents,
+                {
+                  id: `DEP-${Date.now()}`,
+                  name: '',
+                  relationship: 'Spouse',
+                  dateOfBirth: '1995-01-01',
+                  gender: 'Female',
+                  coverageStatus: 'Covered'
+                }
+              ]);
+            };
+
+            const handleRemoveDependent = (id: string) => {
+              setFormDependents(formDependents.filter((d) => d.id !== id));
+            };
+
+            const handleUpdateDependent = (id: string, patch: Partial<InsuranceDependent>) => {
+              setFormDependents(
+                formDependents.map((d) => (d.id === id ? { ...d, ...patch } : d))
+              );
+            };
+
+            const handleSavePolicy = (e: React.FormEvent) => {
+              e.preventDefault();
+              setPolicyError(null);
+
+              if (!policyName.trim() || !policyProvider.trim() || !policyNumber.trim()) {
+                setPolicyError('Policy Name, Insurer Provider, and Policy Number are required.');
+                return;
+              }
+
+              // Validate nominee percentages total 100% if nominees exist
+              if (formNominees.length > 0) {
+                const totalPct = formNominees.reduce((acc, n) => acc + (Number(n.sharePercentage) || 0), 0);
+                if (totalPct !== 100) {
+                  setPolicyError(`Nominee share percentages must total exactly 100% (currently ${totalPct}%).`);
+                  return;
+                }
+                const hasNegative = formNominees.some((n) => Number(n.sharePercentage) < 0);
+                if (hasNegative) {
+                  setPolicyError('Negative nominee share percentage is invalid.');
+                  return;
+                }
+                const missingMinorGuardian = formNominees.some(
+                  (n) => n.isMinor && (!n.guardianName || !n.guardianName.trim() || !n.guardianRelationship?.trim())
+                );
+                if (missingMinorGuardian) {
+                  setPolicyError('Guardian Name and Relationship are required for minor nominees.');
+                  return;
+                }
+              }
+
+              const newPolicyRecord: InsurancePolicyRecord = {
+                id: `POL-${full.id}-${Date.now()}`,
+                employeeId: full.id,
+                policyType,
+                provider: policyProvider.trim(),
+                policyName: policyName.trim(),
+                policyNumber: policyNumber.trim(),
+                groupPolicyNumber: groupPolicyNumber.trim() || undefined,
+                membershipNumber: membershipNumber.trim() || undefined,
+                startDate: policyStartDate,
+                endDate: policyEndDate,
+                coverageAmount: Number(coverageAmount) || 0,
+                coverageType,
+                status: policyStatus,
+                dependents: formDependents,
+                nominees: formNominees,
+                documents: policyDocBlob
+                  ? [
+                      {
+                        id: `DOC-POL-${Date.now()}`,
+                        title: policyDocBlob.name,
+                        fileName: policyDocBlob.name,
+                        fileSize: policyDocBlob.size,
+                        uploadedAt: new Date().toISOString().split('T')[0],
+                        uploadedBy: currentUser.name,
+                        fileData: policyDocBlob.dataUrl
+                      }
+                    ]
+                  : [],
+                updatedAt: new Date().toISOString()
+              };
+
+              db.saveInsurancePolicy(newPolicyRecord);
+              db.logAudit({
+                actorUserId: currentUser.id,
+                actorName: currentUser.name,
+                actorRole: currentUser.role,
+                module: 'EMPLOYEE',
+                action: 'UPDATE',
+                entityId: full.id,
+                entityName: `${full.firstName} ${full.lastName}`,
+                description: `Configured insurance policy "${newPolicyRecord.policyName}" (${newPolicyRecord.policyType}) with ${formNominees.length} nominees for ${full.firstName} ${full.lastName}`
+              });
+
+              setShowAddPolicyModal(false);
+              setPolicySuccess('Insurance policy and nominee details saved successfully!');
+              setPolicyDocBlob(null);
+              setTimeout(() => setPolicySuccess(null), 3500);
+            };
+
+            return (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                      <HeartPulse className="h-4 w-4 text-rose-500" />
+                      <span>Employee Insurance Policy & Nominees</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Post-onboarding policy registration, dependent coverage, and statutory nominee declarations.
+                    </p>
+                  </div>
+
+                  {canManageInsurance && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAddPolicyModal(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-2xs"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Add Insurance Policy</span>
+                    </button>
+                  )}
+                </div>
+
+                {policySuccess && (
+                  <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span>{policySuccess}</span>
+                  </div>
+                )}
+
+                {policies.length === 0 ? (
+                  <div className="p-8 text-center border border-dashed border-slate-200 rounded-xl space-y-2">
+                    <HeartPulse className="h-8 w-8 text-slate-300 mx-auto" />
+                    <p className="text-sm font-semibold text-slate-700">No Insurance Policies Enrolled</p>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      Status: <span className="font-semibold text-amber-700">Not Enrolled / Pending Information</span>.
+                      After onboarding is complete, HR or the employee can record group health, accidental or life insurance coverage.
+                    </p>
+                    {canManageInsurance && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddPolicyModal(true)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 mt-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-xs"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Register First Policy</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {policies.map((pol) => (
+                      <div key={pol.id} className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900 text-sm">{pol.policyName}</span>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  pol.status === 'Enrolled'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : pol.status === 'Pending Information'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : pol.status === 'Expired'
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                                }`}
+                              >
+                                {pol.status}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-600 mt-0.5">
+                              {pol.policyType} · Insurer: <span className="font-semibold text-slate-800">{pol.provider}</span>
+                            </p>
+                          </div>
+
+                          <div className="text-right text-xs">
+                            <span className="text-slate-400 block text-[10px]">Sum Insured</span>
+                            <span className="font-bold text-indigo-700 text-sm">₹{pol.coverageAmount.toLocaleString('en-IN')}</span>
+                          </div>
+                        </div>
+
+                        {/* Policy Metadata Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-slate-50/70 rounded-lg text-xs">
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Policy Number</span>
+                            <span className="font-mono font-semibold text-slate-800">{pol.policyNumber}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Group Policy / Certificate</span>
+                            <span className="font-mono text-slate-700">{pol.groupPolicyNumber || pol.membershipNumber || 'Corporate Group'}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Validity Period</span>
+                            <span className="font-medium text-slate-700">{pol.startDate} to {pol.endDate}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Coverage Scope</span>
+                            <span className="font-semibold text-slate-800">{pol.coverageType}</span>
+                          </div>
+                        </div>
+
+                        {/* Covered Dependents */}
+                        {pol.dependents && pol.dependents.length > 0 && (
+                          <div className="space-y-2">
+                            <span className="font-bold text-slate-800 text-xs block">
+                              Covered Dependents ({pol.dependents.length})
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {pol.dependents.map((dep) => (
+                                <div key={dep.id} className="p-2.5 rounded-lg border border-slate-200 bg-white flex items-center justify-between text-xs">
+                                  <div>
+                                    <span className="font-semibold text-slate-900 block">{dep.name}</span>
+                                    <span className="text-[11px] text-slate-500">
+                                      {dep.relationship} · DOB: {dep.dateOfBirth} {dep.gender ? `· ${dep.gender}` : ''}
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    {dep.coverageStatus}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Registered Nominees */}
+                        <div className="space-y-2">
+                          <span className="font-bold text-slate-800 text-xs block">
+                            Registered Nominees ({pol.nominees?.length || 0})
+                          </span>
+                          {(!pol.nominees || pol.nominees.length === 0) ? (
+                            <p className="text-xs text-amber-700 italic">No nominees currently registered for this policy.</p>
+                          ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {pol.nominees.map((nom) => (
+                                <div key={nom.id} className="p-2.5 rounded-lg border border-slate-200 bg-white space-y-1 text-xs">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-slate-900">{nom.fullName}</span>
+                                    <span className="px-2 py-0.5 rounded font-mono font-bold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                      {nom.sharePercentage}% Share
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-600">
+                                    Relationship: <span className="font-medium text-slate-800">{nom.relationship}</span> · DOB: {nom.dateOfBirth}
+                                    {nom.isMinor && <span className="ml-1 text-amber-700 font-semibold">[Minor]</span>}
+                                  </p>
+                                  {nom.mobileNumber && (
+                                    <p className="text-[11px] text-slate-500">Contact: {nom.mobileNumber}</p>
+                                  )}
+                                  {nom.isMinor && nom.guardianName && (
+                                    <p className="text-[10px] text-amber-800 bg-amber-50 p-1 rounded border border-amber-200">
+                                      Legal Guardian: {nom.guardianName} ({nom.guardianRelationship || 'Guardian'})
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Attached Insurance Documents */}
+                        {pol.documents && pol.documents.length > 0 && (
+                          <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                            <span className="font-bold text-slate-800 text-xs block">Attached Policy Documents</span>
+                            {pol.documents.map((doc) => (
+                              <div key={doc.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <FileText className="h-4 w-4 text-indigo-600" />
+                                  <span className="font-medium text-slate-800">{doc.fileName}</span>
+                                  <span className="text-[10px] text-slate-400">({doc.fileSize})</span>
+                                </div>
+                                {doc.fileData && (
+                                  <a
+                                    href={doc.fileData}
+                                    download={doc.fileName}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 hover:underline"
+                                  >
+                                    <Download className="h-3 w-3" />
+                                    <span>Download</span>
+                                  </a>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add / Enroll Policy Modal */}
+                {showAddPolicyModal && canManageInsurance && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs overflow-y-auto">
+                    <form
+                      onSubmit={handleSavePolicy}
+                      className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 space-y-4 text-xs my-8"
+                    >
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                        <h4 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                          <HeartPulse className="h-4 w-4 text-rose-600" />
+                          <span>Configure Insurance Policy & Nominees</span>
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddPolicyModal(false)}
+                          className="text-slate-400 hover:text-slate-600 font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      {policyError && (
+                        <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4 shrink-0" />
+                          <span>{policyError}</span>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Insurance Category *</label>
+                          <select
+                            value={policyType}
+                            onChange={(e) => setPolicyType(e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
+                          >
+                            <option value="Group Medical Insurance">Group Medical Insurance</option>
+                            <option value="Group Life Insurance">Group Life Insurance</option>
+                            <option value="Personal Accident Insurance">Personal Accident Insurance</option>
+                            <option value="Other Company-Provided Insurance">Other Company Insurance</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Insurer Provider *</label>
+                          <input
+                            required
+                            value={policyProvider}
+                            onChange={(e) => setPolicyProvider(e.target.value)}
+                            placeholder="e.g. Star Health / ICICI Lombard"
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Policy Plan Name *</label>
+                          <input
+                            required
+                            value={policyName}
+                            onChange={(e) => setPolicyName(e.target.value)}
+                            placeholder="e.g. Corporate Family Floater"
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Policy Number *</label>
+                          <input
+                            required
+                            value={policyNumber}
+                            onChange={(e) => setPolicyNumber(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Group / Master Policy</label>
+                          <input
+                            value={groupPolicyNumber}
+                            onChange={(e) => setGroupPolicyNumber(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Sum Insured (₹) *</label>
+                          <input
+                            type="number"
+                            required
+                            min={50000}
+                            step={10000}
+                            value={coverageAmount}
+                            onChange={(e) => setCoverageAmount(Number(e.target.value))}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Coverage Scope</label>
+                          <select
+                            value={coverageType}
+                            onChange={(e) => setCoverageType(e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
+                          >
+                            <option value="Self Only">Self Only</option>
+                            <option value="Self + Spouse">Self + Spouse</option>
+                            <option value="Self + Family">Self + Family</option>
+                            <option value="Parents Coverage">Parents Coverage</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Start Date</label>
+                          <input
+                            type="date"
+                            value={policyStartDate}
+                            onChange={(e) => setPolicyStartDate(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">End Date</label>
+                          <input
+                            type="date"
+                            value={policyEndDate}
+                            onChange={(e) => setPolicyEndDate(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Policy Status</label>
+                          <select
+                            value={policyStatus}
+                            onChange={(e) => setPolicyStatus(e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-medium"
+                          >
+                            <option value="Enrolled">Enrolled</option>
+                            <option value="Pending Information">Pending Information</option>
+                            <option value="Not Enrolled">Not Enrolled</option>
+                            <option value="Expired">Expired</option>
+                            <option value="Not Applicable">Not Applicable</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Covered Dependents Section */}
+                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-800">Covered Family Dependents</span>
+                          <button
+                            type="button"
+                            onClick={handleAddDependent}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 hover:underline"
+                          >
+                            <Plus className="h-3 w-3" />
+                            <span>Add Dependent</span>
+                          </button>
+                        </div>
+
+                        {formDependents.map((dep, idx) => (
+                          <div key={dep.id} className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-center bg-white p-2 rounded border border-slate-200">
+                            <input
+                              placeholder="Dependent Full Name"
+                              value={dep.name}
+                              onChange={(e) => handleUpdateDependent(dep.id, { name: e.target.value })}
+                              className="px-2 py-1 border border-slate-200 rounded text-xs col-span-2"
+                            />
+                            <select
+                              value={dep.relationship}
+                              onChange={(e) => handleUpdateDependent(dep.id, { relationship: e.target.value })}
+                              className="px-2 py-1 border border-slate-200 rounded text-xs"
+                            >
+                              <option value="Spouse">Spouse</option>
+                              <option value="Child / Son">Child / Son</option>
+                              <option value="Child / Daughter">Child / Daughter</option>
+                              <option value="Father">Father</option>
+                              <option value="Mother">Mother</option>
+                            </select>
+                            <input
+                              type="date"
+                              value={dep.dateOfBirth}
+                              onChange={(e) => handleUpdateDependent(dep.id, { dateOfBirth: e.target.value })}
+                              className="px-2 py-1 border border-slate-200 rounded text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDependent(dep.id)}
+                              className="text-rose-600 hover:text-rose-800 font-bold text-xs"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Nominees Section */}
+                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-bold text-slate-800">Policy Nominees *</span>
+                            <span className="text-[11px] text-slate-500 ml-2">
+                              Share Total: <span className="font-bold font-mono">{formNominees.reduce((sum, n) => sum + (Number(n.sharePercentage) || 0), 0)}%</span> / 100%
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleAddNominee}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 hover:underline"
+                          >
+                            <Plus className="h-3 w-3" />
+                            <span>Add Nominee</span>
+                          </button>
+                        </div>
+
+                        {formNominees.map((nom, idx) => (
+                          <div key={nom.id} className="p-2.5 rounded bg-white border border-slate-200 space-y-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                              <input
+                                required
+                                placeholder="Nominee Full Name *"
+                                value={nom.fullName}
+                                onChange={(e) => handleUpdateNominee(nom.id, { fullName: e.target.value })}
+                                className="px-2 py-1 border border-slate-200 rounded text-xs"
+                              />
+                              <input
+                                required
+                                placeholder="Relationship (e.g. Spouse) *"
+                                value={nom.relationship}
+                                onChange={(e) => handleUpdateNominee(nom.id, { relationship: e.target.value })}
+                                className="px-2 py-1 border border-slate-200 rounded text-xs"
+                              />
+                              <div>
+                                <label className="block text-[9px] text-slate-400">Date of Birth</label>
+                                <input
+                                  type="date"
+                                  required
+                                  value={nom.dateOfBirth}
+                                  onChange={(e) => handleUpdateNominee(nom.id, { dateOfBirth: e.target.value })}
+                                  className="w-full px-2 py-1 border border-slate-200 rounded text-xs"
+                                />
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1">
+                                  <label className="block text-[9px] text-slate-400">Share % *</label>
+                                  <input
+                                    type="number"
+                                    required
+                                    min={1}
+                                    max={100}
+                                    value={nom.sharePercentage}
+                                    onChange={(e) => handleUpdateNominee(nom.id, { sharePercentage: Number(e.target.value) })}
+                                    className="w-full px-2 py-1 border border-slate-200 rounded text-xs font-bold"
+                                  />
+                                </div>
+                                {formNominees.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveNominee(nom.id)}
+                                    className="text-rose-600 hover:text-rose-800 text-xs font-bold mt-3"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <input
+                                placeholder="Mobile Number"
+                                value={nom.mobileNumber}
+                                onChange={(e) => handleUpdateNominee(nom.id, { mobileNumber: e.target.value })}
+                                className="px-2 py-1 border border-slate-200 rounded text-xs"
+                              />
+                              <input
+                                placeholder="Email Address (Optional)"
+                                value={nom.email || ''}
+                                onChange={(e) => handleUpdateNominee(nom.id, { email: e.target.value })}
+                                className="px-2 py-1 border border-slate-200 rounded text-xs"
+                              />
+                            </div>
+
+                            {/* Minor Nominee Guardian Info */}
+                            {nom.isMinor && (
+                              <div className="p-2 bg-amber-50 rounded border border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-amber-900 mb-0.5">
+                                    Legal Guardian Full Name (Nominee is Minor) *
+                                  </label>
+                                  <input
+                                    required
+                                    value={nom.guardianName || ''}
+                                    onChange={(e) => handleUpdateNominee(nom.id, { guardianName: e.target.value })}
+                                    placeholder="e.g. Fathima Raseedh"
+                                    className="w-full px-2 py-1 border border-amber-300 rounded text-xs bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-amber-900 mb-0.5">
+                                    Guardian Relationship *
+                                  </label>
+                                  <input
+                                    required
+                                    value={nom.guardianRelationship || ''}
+                                    onChange={(e) => handleUpdateNominee(nom.id, { guardianRelationship: e.target.value })}
+                                    placeholder="e.g. Mother / Maternal Uncle"
+                                    className="w-full px-2 py-1 border border-amber-300 rounded text-xs bg-white"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Policy Document Upload */}
+                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                        <span className="font-bold text-slate-800 block">Attach Insurance Card or Policy Document</span>
+                        <input
+                          ref={policyDocInputRef}
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              const sz = f.size > 1024 * 1024 ? `${(f.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(f.size / 1024)} KB`;
+                              setPolicyDocBlob({ name: f.name, size: sz, dataUrl: reader.result as string });
+                            };
+                            reader.readAsDataURL(f);
+                          }}
+                          className="hidden"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => policyDocInputRef.current?.click()}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-100 font-semibold text-xs"
+                          >
+                            <Upload className="h-3.5 w-3.5 text-indigo-600" />
+                            <span>{policyDocBlob ? 'Replace Attached File' : 'Attach Policy Copy'}</span>
+                          </button>
+                          {policyDocBlob && (
+                            <span className="text-emerald-700 font-medium text-xs flex items-center gap-1">
+                              <Check className="h-3.5 w-3.5" /> {policyDocBlob.name} ({policyDocBlob.size})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddPolicyModal(false)}
+                          className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-2xs"
+                        >
+                          Save Policy & Nominees
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* TAB: LEAVE */}
           {activeTab === 'leave' && (

@@ -5,7 +5,8 @@ export const canonicalEmployees: Employee[] = [
   // HIERARCHY 1: MANAGING DIRECTOR (MD) & HIS REPORTING LINE
   // -------------------------------------------------------------
   {
-    id: 'EMP-000',
+    id: 'EMP-MD-0001',
+    originalLegacyId: 'EMP-000',
     userId: 'user_md_selvakumar',
     firstName: 'Dr. A.',
     lastName: 'Selvakumar',
@@ -55,7 +56,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-002',
+    id: 'EMP-SDM-0003',
+    originalLegacyId: 'EMP-002',
     userId: 'user_manager',
     firstName: 'KrishaRaj',
     lastName: '',
@@ -86,7 +88,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2021-10-01',
     noticePeriodDays: 90,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-000', // Reports to Dr. A. Selvakumar (MD)
+    reportingManagerId: 'EMP-MD-0001', // Reports to Dr. A. Selvakumar (MD)
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'ICICI Bank',
@@ -107,7 +109,8 @@ export const canonicalEmployees: Employee[] = [
   },
   // Developers reporting to KrishaRaj (8 Developers)
   {
-    id: 'EMP-003',
+    id: 'EMP-SWE-0004',
+    originalLegacyId: 'EMP-003',
     userId: 'user_emp_designer',
     firstName: 'Archana',
     lastName: '',
@@ -138,7 +141,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2023-08-10',
     noticePeriodDays: 60,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'Axis Bank',
@@ -158,7 +161,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-011',
+    id: 'EMP-SWE-0005',
+    originalLegacyId: 'EMP-011',
     userId: 'user_anupriya',
     firstName: 'AnuPriya',
     lastName: '',
@@ -189,7 +193,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2024-03-01',
     noticePeriodDays: 60,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'HDFC Bank Ltd',
@@ -209,7 +213,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-012',
+    id: 'EMP-SWE-0006',
+    originalLegacyId: 'EMP-012',
     userId: 'user_suguna',
     firstName: 'Suguna',
     lastName: '',
@@ -240,7 +245,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2024-04-15',
     noticePeriodDays: 60,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'ICICI Bank',
@@ -260,7 +265,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-004',
+    id: 'EMP-SWE-0007',
+    originalLegacyId: 'EMP-004',
     userId: 'user_emp_junior',
     firstName: 'Maha Lakshmi',
     lastName: '',
@@ -291,7 +297,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2024-12-01',
     noticePeriodDays: 30,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'HDFC Bank Ltd',
@@ -311,7 +317,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-015',
+    id: 'EMP-SWE-0008',
+    originalLegacyId: 'EMP-015',
     userId: 'user_priyadharshini',
     firstName: 'Priya Dharshini',
     lastName: '',
@@ -342,7 +349,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2024-05-01',
     noticePeriodDays: 60,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'Kotak Mahindra Bank',
@@ -362,7 +369,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-014',
+    id: 'EMP-SWE-0009',
+    originalLegacyId: 'EMP-014',
     userId: 'user_karthiga',
     firstName: 'Karthika',
     lastName: '',
@@ -393,7 +401,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2024-07-15',
     noticePeriodDays: 45,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'State Bank of India',
@@ -413,7 +421,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-013',
+    id: 'EMP-SWE-0010',
+    originalLegacyId: 'EMP-013',
     userId: 'user_praveen',
     firstName: 'Praveen',
     lastName: '',
@@ -444,7 +453,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2023-12-01',
     noticePeriodDays: 60,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'Axis Bank',
@@ -464,7 +473,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-016',
+    id: 'EMP-SWE-0011',
+    originalLegacyId: 'EMP-016',
     userId: 'user_niranjan',
     firstName: 'Niranjan',
     lastName: '',
@@ -495,7 +505,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2024-02-01',
     noticePeriodDays: 60,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-002', // Reports to KrishaRaj
+    reportingManagerId: 'EMP-SDM-0003', // Reports to KrishaRaj
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'HDFC Bank Ltd',
@@ -519,7 +529,8 @@ export const canonicalEmployees: Employee[] = [
   // HIERARCHY 2: CHIEF OPERATING OFFICER (COO) & HIS REPORTING LINE
   // -------------------------------------------------------------
   {
-    id: 'EMP-010',
+    id: 'EMP-STF-0002',
+    originalLegacyId: 'EMP-010',
     userId: 'user_coo_kannan',
     firstName: 'S.',
     lastName: 'Kannan',
@@ -569,7 +580,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-001',
+    id: 'EMP-HRM-0012',
+    originalLegacyId: 'EMP-001',
     userId: 'user_hr_admin',
     firstName: 'Raseedh',
     lastName: '',
@@ -600,7 +612,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2022-07-15',
     noticePeriodDays: 60,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-010', // Reports to S. Kannan (COO)
+    reportingManagerId: 'EMP-STF-0002', // Reports to S. Kannan (COO)
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'HDFC Bank Ltd',
@@ -620,7 +632,8 @@ export const canonicalEmployees: Employee[] = [
     updatedAt: '2026-10-01T10:00:00Z'
   },
   {
-    id: 'EMP-017',
+    id: 'EMP-FAC-0013',
+    originalLegacyId: 'EMP-017',
     userId: 'user_gowtham',
     firstName: 'Gowtham',
     lastName: '',
@@ -651,7 +664,7 @@ export const canonicalEmployees: Employee[] = [
     confirmationDate: '2023-10-01',
     noticePeriodDays: 45,
     probationPeriodDays: 180,
-    reportingManagerId: 'EMP-010', // Reports to S. Kannan (COO)
+    reportingManagerId: 'EMP-HRM-0012', // Reports to Raseedh (HR Manager & People Ops Lead)
     shiftId: 'SHIFT-GEN',
     bankDetails: {
       bankName: 'Canara Bank',
@@ -669,13 +682,75 @@ export const canonicalEmployees: Employee[] = [
     salaryStructureId: 'SS-JUNIOR',
     createdAt: '2023-04-01T09:00:00Z',
     updatedAt: '2026-10-01T10:00:00Z'
-  }
+  },
+  {
+    id: 'EMP-DEVOPS-0014',
+    originalLegacyId: 'EMP-018',
+    userId: 'user_bhava_dharani',
+    firstName: 'Bhava Dharani',
+    lastName: '',
+    email: 'bhavadharani@orbyx.internal',
+    officialEmail: 'bhavadharani@orbyx.internal',
+    phone: '+91 98400 33441',
+    officialPhone: '+91 98400 33441',
+    avatarUrl: '',
+    dateOfBirth: '1995-11-22',
+    gender: 'Female',
+    bloodGroup: 'A+',
+    maritalStatus: 'Single',
+    address: '#88, 4th Main, HSR Layout Sector 1, Bengaluru',
+    permanentAddress: '#88, 4th Main, HSR Layout Sector 1, Bengaluru',
+    currentAddress: '#88, 4th Main, HSR Layout Sector 1, Bengaluru',
+    emergencyContact: {
+      name: 'R. Dharanidharan',
+      relationship: 'Father',
+      phone: '+91 98400 33449'
+    },
+    departmentId: 'DEP-ENG',
+    designationId: 'DES-DEVOPS',
+    branchId: 'BR-BLR',
+    employmentType: 'Permanent',
+    status: 'Active',
+    profileStatus: 'Active',
+    dateOfJoining: '2023-05-15',
+    confirmationDate: '2023-11-15',
+    noticePeriodDays: 60,
+    probationPeriodDays: 180,
+    reportingManagerId: 'EMP-STF-0002', // Reports to S. Kannan (COO)
+    shiftId: 'SHIFT-GEN',
+    bankDetails: {
+      bankName: 'HDFC Bank Ltd',
+      accountNumber: '50100778899001',
+      ifscOrRouting: 'HDFC0001234',
+      accountType: 'Savings'
+    },
+    panOrTaxNumber: 'BDHRN4455K',
+    pfUan: '101778899001',
+    epfApplicable: true,
+    epfWageCeilingApplied: true,
+    esiApplicable: false,
+    ptApplicable: true,
+    baseSalaryAnnual: 1400000,
+    salaryStructureId: 'SS-SENIOR',
+    createdAt: '2023-05-15T09:00:00Z',
+    updatedAt: '2026-10-01T10:00:00Z'
+  },
 ];
 
 export const canonicalPersonaUsers: CurrentUser[] = [
   {
+    id: 'user_bhava_dharani',
+    employeeId: 'EMP-DEVOPS-0014',
+    name: 'Bhava Dharani',
+    email: 'bhavadharani@orbyx.internal',
+    role: 'employee',
+    departmentId: 'DEP-ENG',
+    designationTitle: 'Devops & Cloud Engineer',
+    avatarUrl: ''
+  },
+  {
     id: 'user_md_selvakumar',
-    employeeId: 'EMP-000',
+    employeeId: 'EMP-MD-0001',
     name: 'Dr. A. Selvakumar',
     email: 'selvakumar@orbyx.internal',
     role: 'senior_manager',
@@ -685,7 +760,7 @@ export const canonicalPersonaUsers: CurrentUser[] = [
   },
   {
     id: 'user_coo_kannan',
-    employeeId: 'EMP-010',
+    employeeId: 'EMP-STF-0002',
     name: 'S. Kannan',
     email: 'kannan@orbyx.internal',
     role: 'senior_manager',
@@ -695,7 +770,7 @@ export const canonicalPersonaUsers: CurrentUser[] = [
   },
   {
     id: 'user_manager',
-    employeeId: 'EMP-002',
+    employeeId: 'EMP-SDM-0003',
     name: 'KrishaRaj',
     email: 'krishnaraj@orbyx.internal',
     role: 'reporting_manager',
@@ -705,7 +780,7 @@ export const canonicalPersonaUsers: CurrentUser[] = [
   },
   {
     id: 'user_hr_admin',
-    employeeId: 'EMP-001',
+    employeeId: 'EMP-HRM-0012',
     name: 'Raseedh',
     email: 'raseedh@orbyx.internal',
     role: 'hr_admin',
@@ -715,7 +790,7 @@ export const canonicalPersonaUsers: CurrentUser[] = [
   },
   {
     id: 'user_emp_designer',
-    employeeId: 'EMP-003',
+    employeeId: 'EMP-SWE-0004',
     name: 'Archana',
     email: 'archana@orbyx.internal',
     role: 'employee',
@@ -725,7 +800,7 @@ export const canonicalPersonaUsers: CurrentUser[] = [
   },
   {
     id: 'user_emp_junior',
-    employeeId: 'EMP-004',
+    employeeId: 'EMP-SWE-0007',
     name: 'Maha Lakshmi',
     email: 'mahalakshmi@orbyx.internal',
     role: 'employee',
@@ -735,7 +810,7 @@ export const canonicalPersonaUsers: CurrentUser[] = [
   },
   {
     id: 'user_anupriya',
-    employeeId: 'EMP-011',
+    employeeId: 'EMP-SWE-0005',
     name: 'AnuPriya',
     email: 'anupriya@orbyx.internal',
     role: 'employee',
@@ -745,7 +820,7 @@ export const canonicalPersonaUsers: CurrentUser[] = [
   },
   {
     id: 'user_praveen',
-    employeeId: 'EMP-013',
+    employeeId: 'EMP-SWE-0010',
     name: 'Praveen',
     email: 'praveen@orbyx.internal',
     role: 'employee',
@@ -756,10 +831,27 @@ export const canonicalPersonaUsers: CurrentUser[] = [
 ];
 
 export const initialServiceRecords: ServiceRecord[] = [
+  // Bhava Dharani
+  {
+    id: 'SR-018-1',
+    employeeId: 'EMP-DEVOPS-0014',
+    employeeName: 'Bhava Dharani',
+    recordType: 'Date of Joining',
+    effectiveDate: '2023-05-15',
+    newDesignation: 'Devops & Cloud Engineer',
+    newDepartment: 'Engineering & Delivery',
+    newReportingManager: 'S. Kannan',
+    revisedSalary: 1400000,
+    description: 'Joined DevOps & Cloud infrastructure engineering squad.',
+    createdBy: 'Raseedh (HR)',
+    approvedBy: 'S. Kannan (COO)',
+    createdDate: '2023-05-15',
+    approvalStatus: 'Approved'
+  },
   // Dr. A. Selvakumar
   {
     id: 'SR-000-1',
-    employeeId: 'EMP-000',
+    employeeId: 'EMP-MD-0001',
     employeeName: 'Dr. A. Selvakumar',
     recordType: 'Date of Joining',
     effectiveDate: '2020-01-01',
@@ -775,7 +867,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // S. Kannan
   {
     id: 'SR-010-1',
-    employeeId: 'EMP-010',
+    employeeId: 'EMP-STF-0002',
     employeeName: 'S. Kannan',
     recordType: 'Date of Joining',
     effectiveDate: '2021-06-15',
@@ -791,7 +883,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // KrishaRaj
   {
     id: 'SR-002-1',
-    employeeId: 'EMP-002',
+    employeeId: 'EMP-SDM-0003',
     employeeName: 'KrishaRaj',
     recordType: 'Date of Joining',
     effectiveDate: '2021-04-01',
@@ -807,7 +899,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   },
   {
     id: 'SR-002-2',
-    employeeId: 'EMP-002',
+    employeeId: 'EMP-SDM-0003',
     employeeName: 'KrishaRaj',
     recordType: 'Salary Revision',
     effectiveDate: '2023-04-01',
@@ -822,7 +914,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Raseedh
   {
     id: 'SR-001-1',
-    employeeId: 'EMP-001',
+    employeeId: 'EMP-HRM-0012',
     employeeName: 'Raseedh',
     recordType: 'Date of Joining',
     effectiveDate: '2022-01-15',
@@ -838,7 +930,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   },
   {
     id: 'SR-001-2',
-    employeeId: 'EMP-001',
+    employeeId: 'EMP-HRM-0012',
     employeeName: 'Raseedh',
     recordType: 'Salary Revision',
     effectiveDate: '2024-04-01',
@@ -853,13 +945,13 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Gowtham
   {
     id: 'SR-017-1',
-    employeeId: 'EMP-017',
+    employeeId: 'EMP-FAC-0013',
     employeeName: 'Gowtham',
     recordType: 'Date of Joining',
     effectiveDate: '2023-04-01',
     newDesignation: 'Facility Manager',
     newDepartment: 'Facilities & Operations',
-    newReportingManager: 'S. Kannan',
+    newReportingManager: 'Raseedh',
     revisedSalary: 1100000,
     description: 'Joined as Facility Manager overseeing workspace operations and vendor management.',
     createdBy: 'Raseedh (HR)',
@@ -870,7 +962,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Archana
   {
     id: 'SR-003-1',
-    employeeId: 'EMP-003',
+    employeeId: 'EMP-SWE-0004',
     employeeName: 'Archana',
     recordType: 'Date of Joining',
     effectiveDate: '2023-02-10',
@@ -886,7 +978,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   },
   {
     id: 'SR-003-2',
-    employeeId: 'EMP-003',
+    employeeId: 'EMP-SWE-0004',
     employeeName: 'Archana',
     recordType: 'Salary Revision',
     effectiveDate: '2024-04-01',
@@ -901,7 +993,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // AnuPriya
   {
     id: 'SR-011-1',
-    employeeId: 'EMP-011',
+    employeeId: 'EMP-SWE-0005',
     employeeName: 'AnuPriya',
     recordType: 'Date of Joining',
     effectiveDate: '2023-09-01',
@@ -918,7 +1010,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Suguna
   {
     id: 'SR-012-1',
-    employeeId: 'EMP-012',
+    employeeId: 'EMP-SWE-0006',
     employeeName: 'Suguna',
     recordType: 'Date of Joining',
     effectiveDate: '2023-10-15',
@@ -935,7 +1027,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Maha Lakshmi
   {
     id: 'SR-004-1',
-    employeeId: 'EMP-004',
+    employeeId: 'EMP-SWE-0007',
     employeeName: 'Maha Lakshmi',
     recordType: 'Date of Joining',
     effectiveDate: '2024-06-01',
@@ -952,7 +1044,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Priya Dharshini
   {
     id: 'SR-015-1',
-    employeeId: 'EMP-015',
+    employeeId: 'EMP-SWE-0008',
     employeeName: 'Priya Dharshini',
     recordType: 'Date of Joining',
     effectiveDate: '2023-11-01',
@@ -969,7 +1061,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Karthika
   {
     id: 'SR-014-1',
-    employeeId: 'EMP-014',
+    employeeId: 'EMP-SWE-0009',
     employeeName: 'Karthika',
     recordType: 'Date of Joining',
     effectiveDate: '2024-01-15',
@@ -986,7 +1078,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Praveen
   {
     id: 'SR-013-1',
-    employeeId: 'EMP-013',
+    employeeId: 'EMP-SWE-0010',
     employeeName: 'Praveen',
     recordType: 'Date of Joining',
     effectiveDate: '2023-06-01',
@@ -1003,7 +1095,7 @@ export const initialServiceRecords: ServiceRecord[] = [
   // Niranjan
   {
     id: 'SR-016-1',
-    employeeId: 'EMP-016',
+    employeeId: 'EMP-SWE-0011',
     employeeName: 'Niranjan',
     recordType: 'Date of Joining',
     effectiveDate: '2023-08-01',

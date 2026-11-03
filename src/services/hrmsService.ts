@@ -24,20 +24,59 @@ const DEFAULT_DUMMY_CLIENT_EMAIL =
 
 export const hrmsService = {
   // ---------------- MODULE 1: EMPLOYEES ----------------
-  generateNextEmployeeId(): string {
+  /**
+   * Derives standardized designation code for employee ID generation.
+   * Format: EMP-[DESIGNATION CODE]-[SEQUENCE] (e.g. EMP-MD-0001, EMP-SWE-0002, EMP-HRM-0003)
+   */
+  getDesignationCode(designationId?: string): string {
+    if (!designationId) return 'GEN';
+    const desigs = db.getDesignations();
+    const found = desigs.find((d) => d.id === designationId);
+    if (!found) {
+      // Derive from ID if pattern matches
+      const fromId = designationId.replace('DES-', '').replace(/[^A-Za-z]/g, '').toUpperCase();
+      return fromId.slice(0, 4) || 'GEN';
+    }
+    // Clean up code like 'MD-01' -> 'MD', 'SDM-01' -> 'SDM', 'SWE-I' -> 'SWE'
+    if (found.code) {
+      const cleaned = found.code.split('-')[0].replace(/[^A-Za-z]/g, '').toUpperCase();
+      if (cleaned) return cleaned;
+    }
+    // Fallback from title
+    const words = found.title.split(/[\s&()\-]+/).filter(Boolean);
+    if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+    return words.map((w) => w[0]).join('').toUpperCase().slice(0, 4);
+  },
+
+  generateNextEmployeeId(designationId?: string): string {
+    const desigCode = this.getDesignationCode(designationId);
     const employees = db.getEmployees();
-    const numbers = employees
-      .map((e) => {
-        const match = e.id.match(/\d+/);
-        return match ? parseInt(match[0], 10) : 0;
-      })
-      .filter((n) => !isNaN(n));
-    const max = numbers.length > 0 ? Math.max(...numbers) : 0;
-    return `EMP-${String(max + 1).padStart(3, '0')}`;
+
+    // Sequence is unique sequential across the organization (or per designation, formatted as 4-digit sequence 0001, 0002)
+    // Extract highest existing sequence across all employee IDs (both new format EMP-XXX-0001 and legacy EMP-001)
+    let maxSeq = 0;
+    employees.forEach((e) => {
+      // Check for EMP-[CODE]-[SEQ]
+      const matchNew = e.id.match(/^EMP-[A-Z]+-(\d+)$/i);
+      if (matchNew) {
+        const num = parseInt(matchNew[1], 10);
+        if (!isNaN(num) && num > maxSeq) maxSeq = num;
+        return;
+      }
+      // Check legacy EMP-001
+      const matchLegacy = e.id.match(/^EMP-(\d+)$/i);
+      if (matchLegacy) {
+        const num = parseInt(matchLegacy[1], 10);
+        if (!isNaN(num) && num > maxSeq) maxSeq = num;
+      }
+    });
+
+    const nextSeq = maxSeq + 1;
+    return `EMP-${desigCode}-${String(nextSeq).padStart(4, '0')}`;
   },
 
   createEmployee(employeeData: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>, actorUserId: string, actorName: string): Employee {
-    const id = this.generateNextEmployeeId();
+    const id = this.generateNextEmployeeId(employeeData.designationId);
     const now = new Date().toISOString();
     const newEmp: Employee = {
       ...employeeData,

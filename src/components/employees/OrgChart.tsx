@@ -52,13 +52,16 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
   const [govName, setGovName] = useState(companyProfile.governanceAuthorityName || '');
   const [govTitle, setGovTitle] = useState(companyProfile.governanceAuthorityTitle || '');
 
-  // Root leaders (no reporting manager or reports to self / EMP-001)
-  const rootLeaders = employees.filter(
-    (e) => !e.reportingManagerId || e.reportingManagerId === e.id || e.id === 'EMP-001'
+  // All employees participate in the Organization Reporting Hierarchy according to configured reporting relationships
+  const hierarchyEmployees = employees;
+
+  // Root leaders (no reporting manager or reports to self)
+  const rootLeaders = hierarchyEmployees.filter(
+    (e) => !e.reportingManagerId || e.reportingManagerId === e.id
   );
 
   const getDirectReports = (empId: string) => {
-    return employees.filter((e) => e.reportingManagerId === empId && e.id !== empId);
+    return hierarchyEmployees.filter((e) => e.reportingManagerId === empId && e.id !== empId);
   };
 
   // Helper to check if `candidateManagerId` is a descendant of `empId` (prevents circular hierarchy)
@@ -158,7 +161,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
     const desig = designations.find((d) => d.id === emp.designationId);
     const dept = departments.find((d) => d.id === emp.departmentId);
     const isCollapsed = collapsedIds.has(emp.id);
-    const isTopMD = emp.id === 'EMP-000' || emp.id === 'EMP-010';
+    const isTopMD = emp.id === 'EMP-000' || emp.id === 'EMP-MD-0001' || emp.originalLegacyId === 'EMP-000' || emp.id === 'EMP-010' || emp.id === 'EMP-STF-0002' || emp.originalLegacyId === 'EMP-010';
 
     return (
       <div key={emp.id} className="relative pl-6 pb-4">
@@ -220,13 +223,13 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
                     <span>Governance</span>
                   </button>
                 )}
-                {isHR && emp.id !== 'EMP-000' && emp.id !== 'EMP-010' && (
+                {isHR && !isTopMD && (
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       setReassigningEmp(emp);
-                      setTargetManagerId(emp.reportingManagerId || 'EMP-001');
+                      setTargetManagerId(emp.reportingManagerId || employees[0]?.id || '');
                       setReassignError('');
                     }}
                     className="px-1.5 py-0.5 rounded bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 font-semibold inline-flex items-center gap-0.5"

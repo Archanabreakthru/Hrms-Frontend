@@ -13,6 +13,7 @@ import { ReportsHub } from './components/reports/ReportsHub';
 import { CompanySettings } from './components/settings/CompanySettings';
 import { OrganizationSetup } from './components/organization/OrganizationSetup';
 import { ClientManagement } from './components/clients/ClientManagement';
+import { ServiceRecordsManagement } from './components/services/ServiceRecordsManagement';
 import { PoliciesHub } from './components/policies/PoliciesHub';
 import { ApplyLeaveModal } from './components/leave/ApplyLeaveModal';
 import { NewExpenseModal } from './components/expenses/NewExpenseModal';
@@ -91,6 +92,12 @@ function MainApp() {
             key={`emp-${navVersion}`}
             navContext={navContext}
             onOpenPolicies={() => openPoliciesForCategory('Employee & Exit')}
+          />
+        );
+      case 'service_records':
+        return (
+          <ServiceRecordsManagement
+            key={`sr-${navVersion}`}
           />
         );
       case 'clients':

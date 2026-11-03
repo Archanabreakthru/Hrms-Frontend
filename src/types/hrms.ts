@@ -157,14 +157,92 @@ export interface ServiceRecord {
   newDepartment?: string;
   previousReportingManager?: string;
   newReportingManager?: string;
+  previousBranch?: string;
+  newBranch?: string;
+  previousEmploymentType?: EmploymentType;
+  newEmploymentType?: EmploymentType;
+  probationDurationDays?: number;
+  confirmationStatus?: 'Confirmed' | 'Extended' | 'Under Review';
+  probationStartDate?: string;
+  expectedConfirmationDate?: string;
   previousSalary?: number;
   revisedSalary?: number;
+  salaryRevisionType?: 'Annual Increment' | 'Promotion Adjustment' | 'Market Correction' | 'Band Realignment';
   description?: string;
+  reason?: string;
   supportingDocument?: string;
+  documentCategory?: string;
+  documentUrl?: string;
   createdBy: string;
   approvedBy?: string;
   createdDate: string;
   approvalStatus: 'Approved' | 'Pending' | 'Rejected';
+  approvalDate?: string;
+}
+
+export type InsurancePolicyCategory =
+  | 'Group Medical Insurance'
+  | 'Group Life Insurance'
+  | 'Personal Accident Insurance'
+  | 'Other Company-Provided Insurance';
+
+export type InsurancePolicyStatus =
+  | 'Not Enrolled'
+  | 'Pending Information'
+  | 'Enrolled'
+  | 'Expired'
+  | 'Not Applicable';
+
+export interface InsuranceDependent {
+  id: string;
+  name: string;
+  relationship: string;
+  dateOfBirth: string;
+  gender?: 'Male' | 'Female' | 'Other';
+  coverageStatus: 'Covered' | 'Pending' | 'Excluded';
+}
+
+export interface InsuranceNominee {
+  id: string;
+  fullName: string;
+  relationship: string;
+  dateOfBirth: string;
+  mobileNumber: string;
+  email?: string;
+  address?: string;
+  sharePercentage: number;
+  isMinor?: boolean;
+  guardianName?: string;
+  guardianRelationship?: string;
+}
+
+export interface InsurancePolicyRecord {
+  id: string;
+  employeeId: string;
+  policyType: InsurancePolicyCategory;
+  provider: string;
+  policyName: string;
+  policyNumber: string;
+  groupPolicyNumber?: string;
+  membershipNumber?: string;
+  startDate: string;
+  endDate: string;
+  coverageAmount: number;
+  coverageType: 'Self Only' | 'Self + Spouse' | 'Self + Family' | 'Parents Coverage';
+  status: InsurancePolicyStatus;
+  dependents: InsuranceDependent[];
+  nominees: InsuranceNominee[];
+  documents?: {
+    id: string;
+    title: string;
+    fileName: string;
+    fileSize: string;
+    uploadedAt: string;
+    uploadedBy: string;
+    fileData?: string;
+  }[];
+  notes?: string;
+  updatedAt?: string;
 }
 
 export interface EmployeeDocument {
@@ -238,7 +316,8 @@ export interface BankAccountDetails {
 }
 
 export interface Employee {
-  id: string; // e.g. EMP-001
+  id: string; // e.g. EMP-MD-0001, EMP-SWE-0002
+  originalLegacyId?: string; // e.g. EMP-000, preserves historical primary reference
   userId: string;
   firstName: string;
   lastName: string;

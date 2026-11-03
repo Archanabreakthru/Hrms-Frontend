@@ -38,7 +38,6 @@ interface StagedDoc {
 export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onClose, onCreated }) => {
   const { currentUser } = useAuth();
 
-  const nextId = hrmsService.generateNextEmployeeId();
   const departments = db.getDepartments();
   const designations = db.getDesignations();
   const branches = db.getBranches();
@@ -57,7 +56,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   const [officialEmail, setOfficialEmail] = useState('');
   const [personalEmail, setPersonalEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [dob, setDob] = useState('1996-01-01');
+  const [dob, setDob] = useState('');
   const [gender, setGender] = useState<'Male' | 'Female' | 'Other'>('Male');
   const [bloodGroup, setBloodGroup] = useState('O+');
   const [maritalStatus, setMaritalStatus] = useState<'Single' | 'Married' | 'Other'>('Single');
@@ -77,7 +76,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   const [designationId, setDesignationId] = useState(designations[0]?.id || 'DES-SWE');
   const [branchId, setBranchId] = useState(branches[0]?.id || 'BR-BLR');
   const [shiftId, setShiftId] = useState(shifts[0]?.id || 'SHIFT-GEN');
-  const [reportingManagerId, setReportingManagerId] = useState(allEmployees[1]?.id || 'EMP-002');
+  const [reportingManagerId, setReportingManagerId] = useState(allEmployees[1]?.id || 'EMP-SDM-0003');
   const [employmentType, setEmploymentType] = useState<EmploymentType>('Permanent');
   const [employeeCategory, setEmployeeCategory] = useState('Core Engineering Staff');
   const [employmentStatus, setEmploymentStatus] = useState<'Active' | 'Probation' | 'Notice Period'>('Active');
@@ -89,12 +88,12 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   // -------------------------------------------------------------
   // Section 3: Salary and Banking Details
   // -------------------------------------------------------------
-  const [baseSalaryAnnual, setBaseSalaryAnnual] = useState(1200000);
+  const [baseSalaryAnnual, setBaseSalaryAnnual] = useState<number>(0);
   const [salaryStructureId, setSalaryStructureId] = useState(structures[0]?.id || 'SS-ENG-LEAD');
-  const [bankName, setBankName] = useState('HDFC Bank Ltd');
+  const [bankName, setBankName] = useState('');
   const [accountHolderName, setAccountHolderName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
-  const [ifsc, setIfsc] = useState('HDFC0001234');
+  const [ifsc, setIfsc] = useState('');
   const [panNumber, setPanNumber] = useState('');
 
   // -------------------------------------------------------------
@@ -111,22 +110,20 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   // -------------------------------------------------------------
   // Section 5: Employee Documents
   // -------------------------------------------------------------
-  const [stagedDocs, setStagedDocs] = useState<StagedDoc[]>([
-    {
-      id: 'DOC-INIT-1',
-      name: 'Signed Offer Letter',
-      category: 'Offer Letter',
-      fileName: 'Signed_Offer_Letter.pdf',
-      fileSize: '420 KB',
-      issueDate: new Date().toISOString().split('T')[0]
-    }
-  ]);
+  const [stagedDocs, setStagedDocs] = useState<StagedDoc[]>([]);
   const [newDocCategory, setNewDocCategory] = useState<DocumentCategory>('ID Proof');
   const [newDocName, setNewDocName] = useState('');
   const [newDocIssueDate, setNewDocIssueDate] = useState('');
   const [newDocExpiryDate, setNewDocExpiryDate] = useState('');
+  const [stagedFileBlob, setStagedFileBlob] = useState<{ name: string; size: string; dataUrl: string } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // Dynamic generated employee ID based on selected designation
+  const nextId = hrmsService.generateNextEmployeeId(designationId);
+
+  // Error and file upload state
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Completeness Preview
   const previewEmp: Partial<Employee> = {
@@ -150,7 +147,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
       accountType: 'Savings'
     },
     panOrTaxNumber: panNumber,
-    baseSalaryAnnual,
+    baseSalaryAnnual: Number(baseSalaryAnnual) || 0,
     emergencyContact: {
       name: emName,
       relationship: emRelation,
@@ -162,15 +159,69 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
 
   const completeness = calculateProfileCompleteness(previewEmp);
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Supported formats: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX
+    const allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'xls', 'xlsx'];
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    if (!allowedExtensions.includes(ext)) {
+      setUploadError(`Unsupported file format (.${ext}). Supported formats: PDF, JPG, PNG, DOC, DOCX, XLS, XLSX.`);
+      e.target.value = '';
+      return;
+    }
+
+    // 10MB limit
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError(`File size exceeds 10MB limit (${(file.size / (1024 * 1024)).toFixed(2)} MB). Please select a smaller file.`);
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const sizeStr = file.size > 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(file.size / 1024)} KB`;
+      setStagedFileBlob({
+        name: file.name,
+        size: sizeStr,
+        dataUrl
+      });
+      if (!newDocName.trim()) {
+        setNewDocName(file.name);
+      }
+    };
+    reader.onerror = () => {
+      setUploadError('Failed to read file from local disk. Please retry.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleAttachClick = () => {
+    setUploadError(null);
+    if (!newDocCategory) {
+      setUploadError('Please select a document category before attaching.');
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
   const handleAddDocument = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newDocName.trim()) return;
+    setUploadError(null);
+    if (!stagedFileBlob && !newDocName.trim()) {
+      setUploadError('Please click Attach to select an actual document file.');
+      return;
+    }
+    const docTitle = newDocName.trim() || stagedFileBlob?.name || `${newDocCategory} Document`;
     const doc: StagedDoc = {
       id: `DOC-STAGE-${Date.now()}`,
-      name: newDocName.trim(),
+      name: docTitle,
       category: newDocCategory,
-      fileName: `${newDocName.trim().replace(/\s+/g, '_')}.pdf`,
-      fileSize: '350 KB',
+      fileName: stagedFileBlob?.name || `${docTitle.replace(/\s+/g, '_')}.pdf`,
+      fileSize: stagedFileBlob?.size || '250 KB',
       issueDate: newDocIssueDate || undefined,
       expiryDate: newDocExpiryDate || undefined
     };
@@ -178,6 +229,8 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
     setNewDocName('');
     setNewDocIssueDate('');
     setNewDocExpiryDate('');
+    setStagedFileBlob(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleRemoveDoc = (id: string) => {
@@ -333,13 +386,17 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-800">Profile Data Completeness:</span>
               <span className={`px-2 py-0.5 rounded font-semibold ${
-                completeness.percentage >= 85
+                completeness.status === 'Not Started'
+                  ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                  : completeness.percentage >= 85 || completeness.status === 'Complete'
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : completeness.percentage >= 50
-                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                  : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  : 'bg-amber-50 text-amber-700 border border-amber-200'
               }`}>
-                {completeness.percentage}% — {completeness.status}
+                {completeness.status === 'Not Started'
+                  ? 'Not Started'
+                  : completeness.status === 'Complete'
+                  ? '100% — Complete'
+                  : `${completeness.percentage}% — In Progress`}
               </span>
             </div>
             <span className="text-[11px] text-slate-500 font-mono">Assigned ID: {nextId}</span>
@@ -348,13 +405,17 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
           <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
             <div
               className={`h-full transition-all duration-300 ${
-                completeness.percentage >= 85 ? 'bg-emerald-500' : completeness.percentage >= 50 ? 'bg-amber-500' : 'bg-rose-500'
+                completeness.status === 'Not Started'
+                  ? 'w-0'
+                  : completeness.percentage >= 85 || completeness.status === 'Complete'
+                  ? 'bg-emerald-500'
+                  : 'bg-amber-500'
               }`}
-              style={{ width: `${completeness.percentage}%` }}
+              style={{ width: completeness.status === 'Not Started' ? '0%' : `${completeness.percentage}%` }}
             />
           </div>
 
-          {completeness.missingFields.length > 0 && (
+          {completeness.missingFields.length > 0 && completeness.status !== 'Not Started' && (
             <p className="text-[11px] text-slate-500 truncate">
               <span className="font-semibold text-slate-700">Pending Information:</span> {completeness.missingFields.slice(0, 6).join(', ')}
               {completeness.missingFields.length > 6 ? ` +${completeness.missingFields.length - 6} more` : ''}
@@ -398,7 +459,8 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
             <PhotoCaptureField
               value={avatarUrl}
               onChange={setAvatarUrl}
-              label="Actual Employee Photograph (Webcam or File Upload)"
+              label="Actual Employee Photograph (Optional - Webcam or File Upload)"
+              placeholderInitials={firstName ? `${firstName.charAt(0)}${lastName ? lastName.charAt(0) : ''}`.toUpperCase() : undefined}
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -799,8 +861,9 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                 <input
                   type="number"
                   required
-                  value={baseSalaryAnnual}
-                  onChange={(e) => setBaseSalaryAnnual(Number(e.target.value))}
+                  value={baseSalaryAnnual || ''}
+                  onChange={(e) => setBaseSalaryAnnual(Number(e.target.value) || 0)}
+                  placeholder="e.g. 1200000"
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-mono text-sm"
                 />
                 <span className="text-[11px] text-slate-500 mt-1 block">
@@ -994,12 +1057,32 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
           <div className="space-y-4 pt-1">
             <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200 space-y-3">
               <span className="font-bold text-slate-800 block">Add Document to Initial Vault</span>
+              
+              {uploadError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+
+              {/* Hidden native file input triggered by Attach button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Category</label>
+                  <label className="block font-medium text-slate-700 mb-1">Category <span className="text-rose-500">*</span></label>
                   <select
                     value={newDocCategory}
-                    onChange={(e) => setNewDocCategory(e.target.value as any)}
+                    onChange={(e) => {
+                      setNewDocCategory(e.target.value as any);
+                      setUploadError(null);
+                    }}
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs"
                   >
                     <option value="Offer Letter">Offer Letter</option>
@@ -1018,20 +1101,37 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   <label className="block font-medium text-slate-700 mb-1">Document Title / File Name</label>
                   <input
                     value={newDocName}
-                    onChange={(e) => setNewDocName(e.target.value)}
+                    onChange={(e) => {
+                      setNewDocName(e.target.value);
+                      setUploadError(null);
+                    }}
                     placeholder="e.g. Aadhaar Card Front & Back.pdf"
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs"
                   />
+                  {stagedFileBlob && (
+                    <p className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1 font-medium">
+                      <Check className="h-3 w-3" /> Selected file: {stagedFileBlob.name} ({stagedFileBlob.size})
+                    </p>
+                  )}
                 </div>
 
-                <div className="flex items-end">
+                <div className="flex items-end gap-1.5">
                   <button
                     type="button"
-                    onClick={handleAddDocument}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs transition-colors"
+                    onClick={handleAttachClick}
+                    className="flex-1 inline-flex items-center justify-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs transition-colors border border-slate-200"
+                    title="Open file selector (PDF, JPG, PNG, DOC, XLS)"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     <span>Attach</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddDocument}
+                    className="flex-1 inline-flex items-center justify-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs transition-colors"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    <span>Stage</span>
                   </button>
                 </div>
               </div>

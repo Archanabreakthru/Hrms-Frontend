@@ -8,7 +8,7 @@ interface AuthContextType {
   currentEmployee?: Employee;
   switchPersona: (userId: string) => void;
   allPersonas: CurrentUser[];
-  canAccessModule: (module: 'hr' | 'organization' | 'clients' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings') => boolean;
+  canAccessModule: (module: 'hr' | 'organization' | 'clients' | 'service_records' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings') => boolean;
   canViewConfidentialSalary: (targetEmployeeId: string) => boolean;
   canManageOrganization: () => boolean;
   canProcessPayroll: () => boolean;
@@ -90,7 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Module Access checks (Strictly internal Orbyx roles only)
-  const canAccessModule = (module: 'hr' | 'organization' | 'clients' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings'): boolean => {
+  const canAccessModule = (module: 'hr' | 'organization' | 'clients' | 'service_records' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings'): boolean => {
     const roleLower = String(currentUser.role).toLowerCase();
     if (roleLower.includes('client') || roleLower.includes('external')) return false;
     if (currentUser.role === 'hr_admin') return true;
@@ -98,6 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (module === 'settings') return false;
     if (module === 'organization') return currentUser.role === 'senior_manager';
     if (module === 'clients') return true; // Employees see only their own client assignments in the module.
+    if (module === 'service_records') return true; // Access granted to internal roles with role-scoped RBAC within the page.
 
     if (module === 'reports') {
       // Organization-wide Reports and Analytics is strictly for HR Admin and Senior Management (Dr. Selvakumar)
