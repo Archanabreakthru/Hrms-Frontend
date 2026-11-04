@@ -1,16 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Upload, RotateCcw, Check, X } from 'lucide-react';
+import { Camera, Upload, RotateCcw, Check, X, User } from 'lucide-react';
 
 interface PhotoCaptureFieldProps {
   value: string;
   onChange: (dataUrlOrUrl: string) => void;
   label?: string;
+  placeholderInitials?: string;
 }
 
 export const PhotoCaptureField: React.FC<PhotoCaptureFieldProps> = ({
   value,
   onChange,
-  label = 'Employee Photograph'
+  label = 'Employee Photograph',
+  placeholderInitials
 }) => {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -48,7 +50,7 @@ export const PhotoCaptureField: React.FC<PhotoCaptureFieldProps> = ({
       setTimeout(() => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play().catch(() => {});
+          videoRef.current.play().catch(() => { });
         }
       }, 50);
     } catch (err: any) {
@@ -92,14 +94,21 @@ export const PhotoCaptureField: React.FC<PhotoCaptureFieldProps> = ({
     <div className="space-y-2 text-xs">
       <span className="block font-semibold text-slate-700">{label}</span>
       <div className="flex flex-wrap items-center gap-4 p-3 bg-white rounded-xl border border-slate-200">
-        <img
-          src={
-            value ||
-            'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80'
-          }
-          alt="Employee preview"
-          className="h-16 w-16 rounded-full object-cover ring-2 ring-indigo-100 shrink-0 bg-slate-100"
-        />
+        {value ? (
+          <img
+            src={value}
+            alt="Employee preview"
+            className="h-16 w-16 rounded-full object-cover ring-2 ring-indigo-100 shrink-0 bg-slate-100"
+          />
+        ) : (
+          <div className="h-16 w-16 rounded-full flex items-center justify-center bg-slate-100 text-slate-500 font-bold text-sm ring-2 ring-slate-200 shrink-0">
+            {placeholderInitials ? (
+              placeholderInitials
+            ) : (
+              <User className="h-7 w-7 text-slate-400" />
+            )}
+          </div>
+        )}
 
         <div className="flex-1 min-w-[200px] space-y-2">
           <div className="flex flex-wrap items-center gap-2">

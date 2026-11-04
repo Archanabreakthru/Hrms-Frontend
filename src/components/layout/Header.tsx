@@ -3,7 +3,7 @@ import { PersonaSwitcher } from './PersonaSwitcher';
 import { NotificationDropdown } from './NotificationDropdown';
 import { useAuth } from '../../services/authContext';
 import { db, subscribeToDB } from '../../db/storage';
-import { CheckCircle2, Clock, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Clock, ShieldCheck, ExternalLink } from 'lucide-react';
 import { NavTab } from './Sidebar';
 
 interface HeaderProps {
@@ -38,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate }) => {
     dashboard: { title: 'Executive Overview', subtitle: 'Workforce operational metrics and daily status' },
     organization: { title: 'Organization Setup', subtitle: 'Legal entity, branches, departments, designations & governance structure' },
     employees: { title: 'Employee Setup', subtitle: 'Employee directory, my reportees & reporting hierarchy' },
+    service_records: { title: 'Service Records & Milestones', subtitle: 'Career milestones, appointments, confirmations, promotions, transfers & work anniversaries' },
     clients: { title: 'Client Management', subtitle: 'Client organizations, employee deployments, assignment lifecycle & 2-stage attendance verification' },
     leave: { title: 'Leave & Absence Management', subtitle: 'Leave applications, approvals, balance ledgers & calendar' },
     attendance: { title: 'Shifts & Attendance', subtitle: 'Check-in/check-out station, manual attendance entries, corrections & shift schedules' },
@@ -100,6 +101,18 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate }) => {
             </button>
           )}
         </div>
+
+        {/* External Client Manager Portal Access Button */}
+        <a
+          href="#client-portal/login"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-xs font-semibold transition-all shadow-2xs"
+          title="Open Client Manager Attendance Verification Portal"
+        >
+          <ExternalLink className="h-3.5 w-3.5 text-purple-600" />
+          <span className="hidden lg:inline">Client Portal</span>
+          <span className="lg:hidden">Portal</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-200 text-purple-900">Preview</span>
+        </a>
 
         {/* Notifications Dropdown */}
         <NotificationDropdown />

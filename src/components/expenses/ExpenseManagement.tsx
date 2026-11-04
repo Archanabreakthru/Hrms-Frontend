@@ -637,7 +637,7 @@ export const ExpenseManagement: React.FC<ExpenseManagementProps> = ({ navContext
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-3 text-xs">
             <h4 className="text-base font-bold text-slate-900">
-              Expense Claim — {viewingClaim.claimNumber}
+              Expense Claim - {viewingClaim.claimNumber}
             </h4>
             <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
               <div>

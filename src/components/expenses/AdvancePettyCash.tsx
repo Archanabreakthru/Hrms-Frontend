@@ -32,7 +32,7 @@ const seedAdvances: AdvanceRecord[] = [
     amount: 20000,
     approvedAmount: 20000,
     recoveredAmount: 5000,
-    purpose: 'Emergency family medical expense — requested 4-month payroll recovery',
+    purpose: 'Emergency family medical expense - requested 4-month payroll recovery',
     date: '2026-10-05',
     status: 'Disbursed',
     paymentReference: 'UTR-HDFC-449102'
@@ -367,7 +367,7 @@ export const AdvancePettyCash: React.FC = () => {
                   </td>
                   <td className="p-3">
                     {diff === undefined
-                      ? '—'
+                      ? '-'
                       : diff === 0
                       ? 'Balanced'
                       : diff > 0

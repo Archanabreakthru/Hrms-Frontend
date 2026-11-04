@@ -115,13 +115,135 @@ export type DocumentCategory =
   | 'Professional Certificate'
   | 'Offer Letter'
   | 'Appointment Letter'
+  | 'Joining Documents'
+  | 'Government ID Proof'
+  | 'PAN Card'
   | 'Address Proof'
   | 'Tax Form'
   | 'Contract'
   | 'Statutory & Tax'
   | 'Performance & Appraisal'
+  | 'Appraisal & Promotion Letter'
+  | 'Previous Employment Documents'
   | 'Exit & Clearance'
-  | 'Degree';
+  | 'Degree'
+  | 'Other Organization Documents';
+
+export type ServiceRecordType =
+  | 'Offer Letter Issued'
+  | 'Appointment Letter Issued'
+  | 'Date of Joining'
+  | 'Employment Confirmation'
+  | 'Probation Completion'
+  | 'Promotion'
+  | 'Designation Change'
+  | 'Department Transfer'
+  | 'Reporting Manager Change'
+  | 'Salary Revision'
+  | 'Branch Transfer'
+  | 'Employment Status Change'
+  | 'Years of Service / Work Anniversary'
+  | 'Resignation / Termination';
+
+export interface ServiceRecord {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  recordType: ServiceRecordType;
+  effectiveDate: string;
+  previousDesignation?: string;
+  newDesignation?: string;
+  previousDepartment?: string;
+  newDepartment?: string;
+  previousReportingManager?: string;
+  newReportingManager?: string;
+  previousBranch?: string;
+  newBranch?: string;
+  previousEmploymentType?: EmploymentType;
+  newEmploymentType?: EmploymentType;
+  probationDurationDays?: number;
+  confirmationStatus?: 'Confirmed' | 'Extended' | 'Under Review';
+  probationStartDate?: string;
+  expectedConfirmationDate?: string;
+  previousSalary?: number;
+  revisedSalary?: number;
+  salaryRevisionType?: 'Annual Increment' | 'Promotion Adjustment' | 'Market Correction' | 'Band Realignment';
+  description?: string;
+  reason?: string;
+  supportingDocument?: string;
+  documentCategory?: string;
+  documentUrl?: string;
+  createdBy: string;
+  approvedBy?: string;
+  createdDate: string;
+  approvalStatus: 'Approved' | 'Pending' | 'Rejected';
+  approvalDate?: string;
+}
+
+export type InsurancePolicyCategory =
+  | 'Group Medical Insurance'
+  | 'Group Life Insurance'
+  | 'Personal Accident Insurance'
+  | 'Other Company-Provided Insurance';
+
+export type InsurancePolicyStatus =
+  | 'Not Enrolled'
+  | 'Pending Information'
+  | 'Enrolled'
+  | 'Expired'
+  | 'Not Applicable';
+
+export interface InsuranceDependent {
+  id: string;
+  name: string;
+  relationship: string;
+  dateOfBirth: string;
+  gender?: 'Male' | 'Female' | 'Other';
+  coverageStatus: 'Covered' | 'Pending' | 'Excluded';
+}
+
+export interface InsuranceNominee {
+  id: string;
+  fullName: string;
+  relationship: string;
+  dateOfBirth: string;
+  mobileNumber: string;
+  email?: string;
+  address?: string;
+  sharePercentage: number;
+  isMinor?: boolean;
+  guardianName?: string;
+  guardianRelationship?: string;
+}
+
+export interface InsurancePolicyRecord {
+  id: string;
+  employeeId: string;
+  policyType: InsurancePolicyCategory;
+  provider: string;
+  policyName: string;
+  policyNumber: string;
+  groupPolicyNumber?: string;
+  membershipNumber?: string;
+  startDate: string;
+  endDate: string;
+  coverageAmount: number;
+  coverageType: 'Self Only' | 'Self + Spouse' | 'Self + Family' | 'Parents Coverage';
+  status: InsurancePolicyStatus;
+  dependents: InsuranceDependent[];
+  nominees: InsuranceNominee[];
+  documents?: {
+    id: string;
+    title: string;
+    fileName: string;
+    fileSize: string;
+    uploadedAt: string;
+    uploadedBy: string;
+    fileData?: string;
+  }[];
+  notes?: string;
+  updatedAt?: string;
+}
 
 export interface EmployeeDocument {
   id: string;
@@ -148,11 +270,20 @@ export type Permission =
   | 'employee.profile.read_all'
   | 'employee.profile.read_org'
   | 'employee.profile.read_sensitive'
+  | 'employee.profile.edit_personal'
+  | 'employee.profile.edit_employment'
+  | 'employee.profile.edit_reporting'
   | 'employee.documents.read_team'
   | 'employee.documents.read_all'
+  | 'employee.documents.manage'
+  | 'employee.documents.verify'
   | 'employee.salary.read'
+  | 'employee.salary.edit'
   | 'employee.bank_details.read'
+  | 'employee.bank_details.edit'
   | 'employee.identity_documents.read'
+  | 'employee.service_records.manage'
+  | 'employee.service_records.approve'
   | 'employee.leave.read_team'
   | 'employee.attendance.read_team'
   | 'employee.expenses.read_team'
@@ -185,7 +316,8 @@ export interface BankAccountDetails {
 }
 
 export interface Employee {
-  id: string; // e.g. EMP-001
+  id: string; // e.g. EMP-MD-0001, EMP-SWE-0002
+  originalLegacyId?: string; // e.g. EMP-000, preserves historical primary reference
   userId: string;
   firstName: string;
   lastName: string;
@@ -201,6 +333,8 @@ export interface Employee {
   bloodGroup?: string;
   maritalStatus?: 'Single' | 'Married' | 'Other';
   address: string;
+  currentAddress?: string;
+  permanentAddress?: string;
   emergencyContact: {
     name: string;
     relationship: string;
@@ -212,6 +346,9 @@ export interface Employee {
   branchId: string;
   employmentType: EmploymentType;
   status: EmploymentStatus;
+  profileStatus?: 'Draft' | 'Profile Incomplete' | 'Pending Verification' | 'Active' | 'Inactive';
+  employeeCategory?: string;
+  probationPeriodDays?: number;
   dateOfJoining: string;
   probationEndDate?: string;
   confirmationDate?: string;
@@ -931,5 +1068,34 @@ export interface NavigationContext {
   employeeId?: string;
   highlightAction?: string;
 }
+
+// ---------------------------------------------------------------------------
+// External Client Supervisor Portal Types
+// ---------------------------------------------------------------------------
+
+export interface ClientSupervisor {
+  id: string; // e.g. 'CSUP-101'
+  clientId: string; // references ClientRecord.id (e.g. 'CLI-101')
+  clientName?: string;
+  name: string;
+  officialEmail: string;
+  phone: string;
+  status: 'Active' | 'Inactive';
+  assignedDeploymentIds: string[]; // references AssignmentRecord.id
+  invitationStatus: 'Invited' | 'Accepted' | 'Expired' | 'Revoked';
+  invitationToken: string;
+  invitedAt: string;
+  acceptedAt?: string;
+  lastLoginAt?: string;
+  notes?: string;
+}
+
+export interface SupervisorSession {
+  supervisor: ClientSupervisor;
+  sessionToken: string;
+  loginTimestamp: string;
+}
+
+
 
 

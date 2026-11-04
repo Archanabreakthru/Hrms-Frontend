@@ -13,7 +13,9 @@ import {
   ClientVerificationStatus,
   CompanyApprovalStatus,
   PayrollEligibilityStatus,
-  DisputeResolutionDecision
+  DisputeResolutionDecision,
+  AttendanceStatus,
+  UserRole
 } from '../types/hrms';
 import { db } from '../db/storage';
 import { permissionService } from './permissionService';
@@ -24,20 +26,59 @@ const DEFAULT_DUMMY_CLIENT_EMAIL =
 
 export const hrmsService = {
   // ---------------- MODULE 1: EMPLOYEES ----------------
-  generateNextEmployeeId(): string {
+  /**
+   * Derives standardized designation code for employee ID generation.
+   * Format: EMP-[DESIGNATION CODE]-[SEQUENCE] (e.g. EMP-MD-0001, EMP-SWE-0002, EMP-HRM-0003)
+   */
+  getDesignationCode(designationId?: string): string {
+    if (!designationId) return 'GEN';
+    const desigs = db.getDesignations();
+    const found = desigs.find((d) => d.id === designationId);
+    if (!found) {
+      // Derive from ID if pattern matches
+      const fromId = designationId.replace('DES-', '').replace(/[^A-Za-z]/g, '').toUpperCase();
+      return fromId.slice(0, 4) || 'GEN';
+    }
+    // Clean up code like 'MD-01' -> 'MD', 'SDM-01' -> 'SDM', 'SWE-I' -> 'SWE'
+    if (found.code) {
+      const cleaned = found.code.split('-')[0].replace(/[^A-Za-z]/g, '').toUpperCase();
+      if (cleaned) return cleaned;
+    }
+    // Fallback from title
+    const words = found.title.split(/[\s&()\-]+/).filter(Boolean);
+    if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+    return words.map((w) => w[0]).join('').toUpperCase().slice(0, 4);
+  },
+
+  generateNextEmployeeId(designationId?: string): string {
+    const desigCode = this.getDesignationCode(designationId);
     const employees = db.getEmployees();
-    const numbers = employees
-      .map((e) => {
-        const match = e.id.match(/\d+/);
-        return match ? parseInt(match[0], 10) : 0;
-      })
-      .filter((n) => !isNaN(n));
-    const max = numbers.length > 0 ? Math.max(...numbers) : 0;
-    return `EMP-${String(max + 1).padStart(3, '0')}`;
+
+    // Sequence is unique sequential across the organization (or per designation, formatted as 4-digit sequence 0001, 0002)
+    // Extract highest existing sequence across all employee IDs (both new format EMP-XXX-0001 and legacy EMP-001)
+    let maxSeq = 0;
+    employees.forEach((e) => {
+      // Check for EMP-[CODE]-[SEQ]
+      const matchNew = e.id.match(/^EMP-[A-Z]+-(\d+)$/i);
+      if (matchNew) {
+        const num = parseInt(matchNew[1], 10);
+        if (!isNaN(num) && num > maxSeq) maxSeq = num;
+        return;
+      }
+      // Check legacy EMP-001
+      const matchLegacy = e.id.match(/^EMP-(\d+)$/i);
+      if (matchLegacy) {
+        const num = parseInt(matchLegacy[1], 10);
+        if (!isNaN(num) && num > maxSeq) maxSeq = num;
+      }
+    });
+
+    const nextSeq = maxSeq + 1;
+    return `EMP-${desigCode}-${String(nextSeq).padStart(4, '0')}`;
   },
 
   createEmployee(employeeData: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>, actorUserId: string, actorName: string): Employee {
-    const id = this.generateNextEmployeeId();
+    const id = this.generateNextEmployeeId(employeeData.designationId);
     const now = new Date().toISOString();
     const newEmp: Employee = {
       ...employeeData,
@@ -998,7 +1039,7 @@ export const hrmsService = {
 
     const successMsg =
       punchType === 'check-in'
-        ? `Check-in recorded at ${nowHours}${record.workMode === 'Client Site' ? ` (${record.projectName} — Pending Client Email Verification)` : ''}.`
+        ? `Check-in recorded at ${nowHours}${record.workMode === 'Client Site' ? ` (${record.projectName} - Pending Client Email Verification)` : ''}.`
         : `Check-out recorded at ${nowHours} (${record.totalHoursWorked}h worked).`;
 
     return { success: true, message: successMsg, record };
@@ -1195,7 +1236,7 @@ export const hrmsService = {
       db.addNotification({
         targetUserId: approver.userId,
         title: `${req.entryType === 'Manual Entry' ? 'Manual Attendance Entry' : 'Attendance Correction'} Pending`,
-        message: `${emp?.firstName} ${emp?.lastName} submitted a ${req.entryType?.toLowerCase()} for ${data.date} (${calculatedHours}h)${isClientSite ? ' — requires Client Email Verification & Company Approval' : ''}.`,
+        message: `${emp?.firstName} ${emp?.lastName} submitted a ${req.entryType?.toLowerCase()} for ${data.date} (${calculatedHours}h)${isClientSite ? ' - requires Client Email Verification & Company Approval' : ''}.`,
         module: 'attendance'
       });
     }
@@ -1364,7 +1405,7 @@ export const hrmsService = {
           actorName,
           actorRole: 'Internal User',
           timestamp: nowIso,
-          comments: `Verification Ref ${referenceId} prepared for ${supervisorName} <${supervisorEmail}> (${params.coverageType}). External email server not configured — manual email dispatch/record.`
+          comments: `Verification Ref ${referenceId} prepared for ${supervisorName} <${supervisorEmail}> (${params.coverageType}). External email server not configured - manual email dispatch/record.`
         }
       ];
       db.saveAttendanceRecord(rec);
@@ -1398,7 +1439,7 @@ export const hrmsService = {
         : `  • Date: ${matchedCorr?.date} | In: ${matchedCorr?.requestedCheckIn} | Out: ${matchedCorr?.requestedCheckOut} | Worked: ${matchedCorr?.calculatedHours || 8}h | Reason: ${matchedCorr?.reason}`;
 
     // Strictly omit confidential employee fields (no salary, bank details, PAN, home address, or personal phone)
-    const subject = `[Orbyx HRMS Verification ${referenceId}] Attendance Confirmation Request — ${emp.firstName} ${emp.lastName} (${emp.id}) | ${projectName}`;
+    const subject = `[Orbyx HRMS Verification ${referenceId}] Attendance Confirmation Request - ${emp.firstName} ${emp.lastName} (${emp.id}) | ${projectName}`;
     const body = [
       `Dear ${supervisorName},`,
       ``,
@@ -1416,8 +1457,8 @@ export const hrmsService = {
       ``,
       `INSTRUCTIONS FOR EXTERNAL EMAIL CONFIRMATION (NO ORBYX LOGIN REQUIRED):`,
       `Please reply directly to this email quoting Reference ID [${referenceId}] with one of the following:`,
-      `  1. "CONFIRMED / VERIFIED" — if the recorded dates, check-in/check-out times, and working hours are accurate.`,
-      `  2. "DISPUTED / CORRECTION REQUESTED" — if any date, timestamp, or working hour is inaccurate (please specify the actual hours/times observed at the client site).`,
+      `  1. "CONFIRMED / VERIFIED" - if the recorded dates, check-in/check-out times, and working hours are accurate.`,
+      `  2. "DISPUTED / CORRECTION REQUESTED" - if any date, timestamp, or working hour is inaccurate (please specify the actual hours/times observed at the client site).`,
       ``,
       `Thank you,`,
       `${actorName}`,
@@ -1782,7 +1823,7 @@ export const hrmsService = {
       companyApprovalStatus:
         data.decision === 'Verified'
           ? 'Pending HR/Manager Final Approval'
-          : 'Disputed — Under Internal Review',
+          : 'Disputed - Under Internal Review',
       reviewComments: data.comments
     };
 
@@ -1800,7 +1841,7 @@ export const hrmsService = {
       if (mgr) {
         db.addNotification({
           targetUserId: mgr.userId,
-          title: `Client Attendance Dispute Flagged — ${emp.firstName}`,
+          title: `Client Attendance Dispute Flagged - ${emp.firstName}`,
           message: `${data.senderName} (${clientObj?.name}) disputed ${emp.firstName}'s hours on ${startDate}. Internal review required.`,
           module: 'attendance'
         });
@@ -1826,6 +1867,154 @@ export const hrmsService = {
       confirmationId,
       confirmationRecord,
       updatedAttendanceCount: matchingRecords.length
+    };
+  },
+
+  // ---------------- EXTERNAL CLIENT SUPERVISOR PORTAL ATTENDANCE SUBMISSION ----------------
+  submitClientSupervisorAttendanceDirect(params: {
+    supervisorId: string;
+    supervisorName: string;
+    supervisorEmail: string;
+    clientId: string;
+    records: Array<{
+      id?: string;
+      employeeId: string;
+      date: string;
+      checkInTime: string;
+      checkOutTime: string;
+      totalHoursWorked: number;
+      status: AttendanceStatus;
+      assignmentId?: string;
+      notes?: string;
+    }>;
+    decision: 'Verified' | 'Disputed' | 'Correction Requested';
+    disputeDetails?: string;
+    notes?: string;
+  }): { success: boolean; message: string; updatedCount: number } {
+    const supervisor = db.getClientSupervisorById(params.supervisorId);
+    if (!supervisor || supervisor.status !== 'Active') {
+      return {
+        success: false,
+        message: 'Unauthorized: Client supervisor account is not registered or is currently inactive.',
+        updatedCount: 0
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const todayStr = nowIso.slice(0, 10);
+    const clients = this.getClientsFromStorage();
+    const clientObj = clients.find((c) => c.id === params.clientId) || clients[0];
+    const existingAtt = db.getAttendanceRecords();
+    let updatedCount = 0;
+
+    params.records.forEach((input) => {
+      let rec = existingAtt.find(
+        (r) =>
+          (input.id && r.id === input.id) ||
+          (r.employeeId === input.employeeId && r.date === input.date)
+      );
+
+      const emp = db.getEmployeeById(input.employeeId);
+      const shift = db.getShifts().find((s) => s.id === (emp?.shiftId || 'SHIFT-GEN')) || db.getShifts()[0];
+      const hrs = input.totalHoursWorked;
+
+      if (!rec) {
+        rec = {
+          id: input.id || `ATT-${input.date.replace(/-/g, '')}-${input.employeeId}`,
+          employeeId: input.employeeId,
+          date: input.date,
+          entryDate: todayStr,
+          shiftId: shift.id,
+          checkInTime: input.checkInTime,
+          checkOutTime: input.checkOutTime,
+          totalHoursWorked: hrs,
+          regularHours: Math.min(8, hrs),
+          overtimeHours: Math.max(0, Number((hrs - 8).toFixed(2))),
+          status: input.status,
+          isLate: false,
+          isEarlyDeparture: false,
+          lateMinutes: 0,
+          source: 'Client Timesheet',
+          workMode: 'Client Site',
+          assignmentId: input.assignmentId,
+          clientId: params.clientId,
+          projectName: clientObj?.name || 'Client Project',
+          notes: input.notes
+        };
+      } else {
+        rec.checkInTime = input.checkInTime;
+        rec.checkOutTime = input.checkOutTime;
+        rec.totalHoursWorked = hrs;
+        rec.regularHours = Math.min(8, hrs);
+        rec.overtimeHours = Math.max(0, Number((hrs - 8).toFixed(2)));
+        rec.status = input.status;
+        rec.source = 'Client Timesheet';
+        rec.workMode = 'Client Site';
+        rec.assignmentId = input.assignmentId || rec.assignmentId;
+        rec.clientId = params.clientId;
+        if (input.notes) rec.notes = input.notes;
+      }
+
+      rec.clientSupervisorName = params.supervisorName;
+      rec.clientSupervisorEmail = params.supervisorEmail;
+      rec.clientVerifiedAt = todayStr;
+      rec.verificationMethod = 'Portal Approval';
+      rec.verificationRefId = `PORTAL-${params.supervisorId}-${Date.now()}`;
+
+      if (params.decision === 'Verified') {
+        rec.clientVerificationStatus = 'Verified';
+        rec.companyApprovalStatus = 'Pending';
+        rec.payrollEligibilityStatus = 'Not Eligible';
+        rec.approvalStatus = 'Pending Manager Approval';
+        rec.approvalHistory = [
+          ...(rec.approvalHistory || []),
+          {
+            stage: 'Stage 1: Client Supervisor Portal Approval',
+            actorName: `${params.supervisorName} (${params.supervisorEmail})`,
+            actorRole: 'External Client Supervisor',
+            timestamp: nowIso,
+            decision: 'Verified',
+            comments: params.notes || 'Recorded and verified directly via Client Supervisor Portal. Forwarded to Orbyx Internal HR for Stage 2 Final Approval.'
+          }
+        ];
+      } else {
+        rec.clientVerificationStatus = params.decision;
+        rec.companyApprovalStatus = 'Pending';
+        rec.payrollEligibilityStatus = 'Not Eligible';
+        rec.approvalStatus = 'Disputed';
+        rec.disputeDetails = params.disputeDetails || params.notes;
+        rec.approvalHistory = [
+          ...(rec.approvalHistory || []),
+          {
+            stage: 'Stage 1: Client Supervisor Disputed Attendance',
+            actorName: `${params.supervisorName} (${params.supervisorEmail})`,
+            actorRole: 'External Client Supervisor',
+            timestamp: nowIso,
+            decision: 'Disputed',
+            comments: params.disputeDetails || 'Disputed attendance details via Client Supervisor Portal.'
+          }
+        ];
+      }
+
+      db.saveAttendanceRecord(rec);
+      updatedCount++;
+    });
+
+    db.logAudit({
+      actorUserId: params.supervisorId,
+      actorName: params.supervisorName,
+      actorRole: 'employee' as UserRole,
+      action: 'UPDATE',
+      module: 'ATTENDANCE',
+      entityId: `BATCH-${Date.now()}`,
+      entityName: `${params.supervisorName} (${clientObj?.name})`,
+      description: `Client Supervisor ${params.supervisorName} (${params.supervisorEmail}) submitted and approved ${updatedCount} attendance record(s) via External Client Supervisor Portal.`
+    });
+
+    return {
+      success: true,
+      message: `Successfully submitted ${updatedCount} attendance record(s) to Orbyx Internal HR approval queue.`,
+      updatedCount
     };
   },
 
@@ -2513,7 +2702,7 @@ export const hrmsService = {
         const nonPayableDates = Array.from(new Set(unapprovedOrDisputedAtt.map((r) => r.date)));
         unpaidDays += nonPayableDates.length;
         complianceWarnings.push(
-          `Excluded ${nonPayableDates.length} unapproved/disputed attendance day(s) (${nonPayableDates.join(', ')}) from payable days — requires Client Email Verification & Company HR/Manager Approval.`
+          `Excluded ${nonPayableDates.length} unapproved/disputed attendance day(s) (${nonPayableDates.join(', ')}) from payable days - requires Client Email Verification & Company HR/Manager Approval.`
         );
       }
 

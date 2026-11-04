@@ -943,7 +943,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
         <div>
           <span className="font-mono font-semibold text-slate-900 block">Att: {req.date}</span>
           <span className="text-[10px] text-slate-400 block">
-            Entry: {req.entryDate || (req.submittedAt ? req.submittedAt.slice(0, 10) : '—')}
+            Entry: {req.entryDate || (req.submittedAt ? req.submittedAt.slice(0, 10) : '-')}
           </span>
         </div>
       )
@@ -1989,7 +1989,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
 
             {(recordEmailModal.decision === 'Disputed' || recordEmailModal.decision === 'Correction Requested') && (
               <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 space-y-2.5">
-                <p className="font-bold text-rose-800">Scenario D — Client Disputed Working Hours Details</p>
+                <p className="font-bold text-rose-800">Scenario D - Client Disputed Working Hours Details</p>
                 <div className="grid grid-cols-3 gap-2">
                   <div>
                     <label className="block text-[10px] font-semibold text-rose-700 mb-1">Client Claimed Check-In</label>
@@ -2074,14 +2074,14 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
         </div>
       )}
 
-      {/* Modal 3: Scenario D — Client Dispute Clarification & Internal Resolution */}
+      {/* Modal 3: Scenario D - Client Dispute Clarification & Internal Resolution */}
       {disputeModalRec && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 space-y-4 text-xs max-h-[92vh] overflow-y-auto">
             <div className="flex items-start justify-between border-b border-slate-100 pb-3">
               <div>
                 <h4 className="text-base font-bold text-slate-900">
-                  Scenario D — Client Attendance Dispute Review & Resolution ({disputeModalRec.employeeId} · {disputeModalRec.date})
+                  Scenario D - Client Attendance Dispute Review & Resolution ({disputeModalRec.employeeId} · {disputeModalRec.date})
                 </h4>
                 <p className="text-[11px] text-slate-500">
                   Preserves original employee timestamps, client supervisor dispute details, employee clarification, and internal Manager/HR resolution.
