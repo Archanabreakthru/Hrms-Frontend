@@ -399,9 +399,9 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
                 onChange={(e) => setGovMode(e.target.value as any)}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
               >
-                <option value="None">None — MD is at the top of the operational hierarchy</option>
-                <option value="Chairman">Chairman — MD reports to / is overseen by a Chairman</option>
-                <option value="Board of Directors">Board of Directors — MD is overseen by the Board</option>
+                <option value="None">None - MD is at the top of the operational hierarchy</option>
+                <option value="Chairman">Chairman - MD reports to / is overseen by a Chairman</option>
+                <option value="Board of Directors">Board of Directors - MD is overseen by the Board</option>
               </select>
             </div>
 
@@ -505,7 +505,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
                   return (
                     <option key={m.id} value={m.id}>
                       {m.firstName} {m.lastName} ({m.id})
-                      {isSelf ? ' — [Self - Blocked]' : isSubordinate ? ' — [Subordinate - Circular Blocked]' : ''}
+                      {isSelf ? ' - [Self - Blocked]' : isSubordinate ? ' - [Subordinate - Circular Blocked]' : ''}
                     </option>
                   );
                 })}

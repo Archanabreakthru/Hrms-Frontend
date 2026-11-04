@@ -19,6 +19,7 @@ import { ApplyLeaveModal } from './components/leave/ApplyLeaveModal';
 import { NewExpenseModal } from './components/expenses/NewExpenseModal';
 import { NavigationContext, PolicyModule } from './types/hrms';
 import { ArrowLeft } from 'lucide-react';
+import { ClientPortalApp } from './components/client-portal/ClientPortalApp';
 
 function MainApp() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
@@ -46,6 +47,22 @@ function MainApp() {
     },
     []
   );
+
+  const [isClientPortal, setIsClientPortal] = useState<boolean>(() => {
+    return window.location.hash.startsWith('#client-portal');
+  });
+
+  useEffect(() => {
+    const handleHash = () => {
+      setIsClientPortal(window.location.hash.startsWith('#client-portal'));
+    };
+    window.addEventListener('hashchange', handleHash);
+    window.addEventListener('popstate', handleHash);
+    return () => {
+      window.removeEventListener('hashchange', handleHash);
+      window.removeEventListener('popstate', handleHash);
+    };
+  }, []);
 
   useEffect(() => {
     const onPopState = (e: PopStateEvent) => {
@@ -169,6 +186,17 @@ function MainApp() {
         );
     }
   };
+
+  if (isClientPortal) {
+    return (
+      <ClientPortalApp
+        onReturnToHRMS={() => {
+          setIsClientPortal(false);
+          navigateTo('dashboard');
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-800 antialiased">

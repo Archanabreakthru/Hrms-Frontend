@@ -357,7 +357,7 @@ export const ProcessPayrollModal: React.FC<ProcessPayrollModalProps> = ({
                 <div className="flex items-center justify-between border-b border-slate-700 pb-2">
                   <div>
                     <h5 className="font-bold text-sm text-white">
-                      Employee Calculation Breakdown — {inspectingItem.employeeName} ({inspectingItem.employeeId})
+                      Employee Calculation Breakdown - {inspectingItem.employeeName} ({inspectingItem.employeeId})
                     </h5>
                     <p className="text-[11px] text-slate-400">
                       Payable Days = {inspectingItem.payableDays}/{inspectingItem.workingDaysInMonth} (Days Present: {inspectingItem.daysPresent}d, Paid Leave: {inspectingItem.paidLeaves}d, LOP: {inspectingItem.unpaidLeaves}d · {inspectingItem.payableDaysFormula || 'Prorated'})

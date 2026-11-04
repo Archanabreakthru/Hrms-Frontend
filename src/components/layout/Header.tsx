@@ -3,7 +3,7 @@ import { PersonaSwitcher } from './PersonaSwitcher';
 import { NotificationDropdown } from './NotificationDropdown';
 import { useAuth } from '../../services/authContext';
 import { db, subscribeToDB } from '../../db/storage';
-import { CheckCircle2, Clock, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Clock, ShieldCheck, ExternalLink } from 'lucide-react';
 import { NavTab } from './Sidebar';
 
 interface HeaderProps {
@@ -101,6 +101,18 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate }) => {
             </button>
           )}
         </div>
+
+        {/* External Client Manager Portal Access Button */}
+        <a
+          href="#client-portal/login"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-xs font-semibold transition-all shadow-2xs"
+          title="Open Client Manager Attendance Verification Portal"
+        >
+          <ExternalLink className="h-3.5 w-3.5 text-purple-600" />
+          <span className="hidden lg:inline">Client Portal</span>
+          <span className="lg:hidden">Portal</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-200 text-purple-900">Preview</span>
+        </a>
 
         {/* Notifications Dropdown */}
         <NotificationDropdown />

@@ -1,3 +1,4 @@
+// Orbyx HRMS Auth Context - strictly typed role-based access
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { CurrentUser, UserRole, Employee } from '../types/hrms';
 import { personaUsers } from '../db/initialData';

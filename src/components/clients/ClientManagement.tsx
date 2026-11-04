@@ -26,11 +26,12 @@ import {
   Copy,
   Clock,
   Check,
+  ExternalLink,
   X
 } from 'lucide-react';
 import { useAuth } from '../../services/authContext';
 import { db, subscribeToDB } from '../../db/storage';
-import { NavigationContext, AttendanceRecord, DisputeResolutionDecision } from '../../types/hrms';
+import { NavigationContext, AttendanceRecord, DisputeResolutionDecision, ClientSupervisor } from '../../types/hrms';
 import { hrmsService } from '../../services/hrmsService';
 import { ExportButton } from '../common/ExportButton';
 import { CsvImportModal } from '../common/CsvImportModal';
@@ -65,6 +66,7 @@ export interface AssignmentRecord {
   allocation: number;
   allowanceMonthly?: number;
   reportingManagerId?: string;
+  clientSupervisorId?: string;
   clientSupervisorName?: string;
   clientSupervisorEmail?: string;
   shiftId?: string;
@@ -228,7 +230,7 @@ interface ClientManagementProps {
 
 export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, onOpenPolicies }) => {
   const { currentUser, canApproveRequestFor } = useAuth();
-  const [activeTab, setActiveTab] = useState<'directory' | 'assignments' | 'attendance'>('directory');
+  const [activeTab, setActiveTab] = useState<'directory' | 'assignments' | 'supervisors' | 'attendance'>('directory');
   const [clients, setClients] = useState<ClientRecord[]>(readClients);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>(readAssignments);
   const [, setDbTick] = useState(0);
@@ -362,6 +364,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
     allocation: 100,
     allowanceMonthly: 5000,
     reportingManagerId: 'EMP-002',
+    clientSupervisorId: '',
     clientSupervisorName: '',
     clientSupervisorEmail: '',
     shiftId: 'SHIFT-GEN',
@@ -369,6 +372,25 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
     requiresClientVerification: true,
     status: 'Active' as AssignmentStatus
   });
+
+  // Supervisor Management State
+  const supervisors = db.getClientSupervisors();
+  const [supervisorQuery, setSupervisorQuery] = useState('');
+  const [supervisorClientFilter, setSupervisorClientFilter] = useState('ALL');
+  const [supervisorStatusFilter, setSupervisorStatusFilter] = useState('ALL');
+  const [showSupervisorModal, setShowSupervisorModal] = useState(false);
+  const [editingSupervisor, setEditingSupervisor] = useState<ClientSupervisor | null>(null);
+  const [supervisorForm, setSupervisorForm] = useState({
+    name: '',
+    officialEmail: '',
+    phone: '',
+    clientId: '',
+    status: 'Active' as 'Active' | 'Inactive',
+    assignedDeploymentIds: [] as string[],
+    notes: ''
+  });
+  const [invitationModalSupervisor, setInvitationModalSupervisor] = useState<ClientSupervisor | null>(null);
+  const [invitationCopied, setInvitationCopied] = useState(false);
 
   const canAdmin = currentUser.role === 'hr_admin';
   const canManageAssignments =
@@ -513,7 +535,8 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       allocation: 100,
       allowanceMonthly: 5000,
       reportingManagerId: 'EMP-002',
-      clientSupervisorName: '',
+      clientSupervisorId: '',
+    clientSupervisorName: '',
       clientSupervisorEmail: '',
       shiftId: 'SHIFT-GEN',
       attendanceRules: 'External Client Email Verification + Internal Manager/HR Approval Required',
@@ -537,6 +560,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       allocation: a.allocation,
       allowanceMonthly: a.allowanceMonthly || 0,
       reportingManagerId: a.reportingManagerId || 'EMP-002',
+      clientSupervisorId: a.clientSupervisorId || '',
       clientSupervisorName: a.clientSupervisorName || cli?.contactName || '',
       clientSupervisorEmail: a.clientSupervisorEmail || cli?.email || '',
       shiftId: a.shiftId || 'SHIFT-GEN',
@@ -624,7 +648,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       description: `Closed client deployment ${a.id} for ${a.employeeId} on ${closeDate}. Pending client verifications: ${pendingVerCount}, pending company approvals: ${pendingAppCount}. Company employment status remains Active.`
     });
     setNotice(
-      `Deployment ${a.id} closed on ${closeDate}. New client-site attendance after ${closeDate} is blocked while historical corrections remain allowed. Pending Client Email Verifications: ${pendingVerCount} · Pending Company Approvals: ${pendingAppCount}. Employee company status remains Active.`
+      `Deployment ${a.id} closed on ${closeDate}. New client-site attendance after ${closeDate} is blocked while historical corrections remain allowed. Pending Client Email Verifications: ${pendingVerCount} • Pending Company Approvals: ${pendingAppCount}. Employee company status remains Active.`
     );
   };
 
@@ -704,7 +728,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       action: existingSameDate ? 'UPDATE' : 'CREATE',
       entityId: recordId,
       entityName: loggingAssignment.employeeId,
-      description: `${existingSameDate ? 'Merged/Updated' : 'Logged'} client-site attendance for ${loggingAssignment.employeeId} on ${attDate} (${loggingAssignment.project}) — Stage: ${attInitialStage}`
+      description: `${existingSameDate ? 'Merged/Updated' : 'Logged'} client-site attendance for ${loggingAssignment.employeeId} on ${attDate} (${loggingAssignment.project}) - Stage: ${attInitialStage}`
     });
 
     setNotice(
@@ -742,7 +766,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       return;
     }
     setNotice(
-      `Stage 1 Complete: Recorded external email confirmation (${res.confirmationId}) from Client Supervisor (${supName} <${supEmail}>) for ${rec.employeeId} on ${rec.date}. Client verification never auto-approves company attendance — now awaiting Stage 2 Company HR / Manager Final Approval.`
+      `Stage 1 Complete: Recorded external email confirmation (${res.confirmationId}) from Client Supervisor (${supName} <${supEmail}>) for ${rec.employeeId} on ${rec.date}. Client verification never auto-approves company attendance - now awaiting Stage 2 Company HR / Manager Final Approval.`
     );
   };
 
@@ -803,8 +827,8 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
     const supEmail = rec.clientSupervisorEmail || asg?.clientSupervisorEmail || cli?.email || 'supervisor@client.example.com';
     const refId = draftRes.referenceId || `VREQ-${Date.now().toString().slice(-5)}`;
 
-    const subject = `Attendance Verification Request – ${employees.find((e) => e.id === rec.employeeId)?.firstName || rec.employeeId
-      } – ${rec.date}`;
+    const subject = `Attendance Verification Request - ${employees.find((e) => e.id === rec.employeeId)?.firstName || rec.employeeId
+      } - ${rec.date}`;
 
     const body = [
       `Dear ${supName},`,
@@ -853,7 +877,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       decision: defaultDecision,
       senderName: supName,
       senderEmail: supEmail,
-      emailSubject: `RE: Attendance Verification Request – ${rec.employeeId} – ${rec.date}`,
+      emailSubject: `RE: Attendance Verification Request - ${rec.employeeId} - ${rec.date}`,
       emailReceivedAt: new Date().toISOString().slice(0, 16),
       messageReference: `MSG-EXT-${Date.now().toString().slice(-5)}`,
       attachmentFileName: '',
@@ -1112,7 +1136,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       <div className="flex flex-wrap items-start justify-between gap-3 bg-white p-5 rounded-xl border border-slate-200">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">
-            Workforce Operations · Strict Internal Access Only (No External Client Logins)
+            Workforce Operations • Client Organizations, Supervisors & Deployments
           </p>
           <h1 className="mt-1 text-xl font-bold text-slate-900">Client & Deployment Management</h1>
 
@@ -1194,19 +1218,28 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
               1. Client Registry ({visibleClients.length})
             </button>
           )}
+                    <button
+            onClick={() => setActiveTab('supervisors')}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${activeTab === 'supervisors' ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+          >
+            <span>2. Client Supervisors (${supervisors.length})</span>
+            <span className="px-1.5 py-0.2 text-[10px] font-bold bg-teal-100 text-teal-800 rounded-full">
+              Portal
+            </span>
+          </button>
           <button
             onClick={() => setActiveTab('assignments')}
             className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${activeTab === 'assignments' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:text-slate-900'
               }`}
           >
-            2. Employee Deployments ({visibleAssignments.length})
+            3. Employee Deployments (${visibleAssignments.length})
           </button>
           <button
             onClick={() => setActiveTab('attendance')}
             className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${activeTab === 'attendance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:text-slate-900'
               }`}
           >
-            <span>3. Client-Site Attendance & Approvals ({clientSiteRecords.length})</span>
+            <span>4. Client-Site Attendance & Approvals ({clientSiteRecords.length})</span>
             {pendingClientAttCount > 0 && (
               <span className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded-full">
                 {pendingClientAttCount} Pending
@@ -1282,7 +1315,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                         <div>
                           <h3 className="font-bold text-slate-900 text-sm">{c.name}</h3>
                           <p className="mt-0.5 text-xs text-slate-500">
-                            {c.id} · {c.address}
+                            {c.id} • {c.address}
                           </p>
                         </div>
                       </div>
@@ -1300,10 +1333,10 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                     <div className="mt-3 space-y-1 text-xs text-slate-600">
                       <p>External Client Supervisor Contact: <span className="font-semibold text-slate-800">{c.contactName || 'Not specified'}</span></p>
                       <p className="font-mono text-[11px]">
-                        {c.email || 'No email'} {c.phone ? ` · ${c.phone}` : ''}
+                        {c.email || 'No email'} {c.phone ? ` • ${c.phone}` : ''}
                       </p>
                       <p className="text-[11px] text-slate-400">
-                        Contract Period: {c.contractStart || '—'} to {c.contractEnd || '—'}
+                        Contract Period: {c.contractStart || '-'} to {c.contractEnd || '-'}
                       </p>
                     </div>
                   </div>
@@ -1467,7 +1500,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                             {emp ? `${emp.firstName} ${emp.lastName}` : a.employeeId}
                           </p>
                           <p className="text-[11px] text-slate-400 font-mono">
-                            {a.employeeId} · Co. Status: <span className="text-emerald-700 font-semibold">{emp?.status || 'Active'}</span>
+                            {a.employeeId} • Co. Status: <span className="text-emerald-700 font-semibold">{emp?.status || 'Active'}</span>
                           </p>
                           {mgr && (
                             <p className="text-[10px] text-slate-500">
@@ -1486,7 +1519,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                           </p>
                         </td>
                         <td className="p-3">
-                          <span className="font-medium text-slate-800">{a.workMode}</span> ({a.allocation}%) ·{' '}
+                          <span className="font-medium text-slate-800">{a.workMode}</span> ({a.allocation}%) •{' '}
                           <span className="font-mono text-[11px] text-slate-600">{a.shiftId || 'SHIFT-GEN'}</span>
                           <p className="text-[11px] text-slate-400">
                             {a.location || 'Location not specified'}
@@ -1595,7 +1628,307 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
         </section>
       )}
 
-      {/* Tab 3: Client-Site Attendance & Multi-Stage Verification/Approval (Redesigned with 4 Internal Sections) */}
+      {/* Tab 3: Client Supervisors (External Supervisor Management) */}
+      {activeTab === 'supervisors' && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <div className="flex items-center gap-2">
+                <Users size={18} className="text-teal-600" />
+                <h2 className="font-bold text-slate-900 text-sm">
+                  External Client Supervisors & Portal Management
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Register external client supervisors, manage prototype invitation tokens, and map employee deployments for Stage 1 timesheet verification.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <a
+                href="#client-portal/login"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition-colors shadow-2xs"
+              >
+                <ExternalLink size={14} />
+                <span>Open Client Portal (Preview) &rarr;</span>
+              </a>
+
+              {canAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingSupervisor(null);
+                    setSupervisorForm({
+                      name: '',
+                      officialEmail: '',
+                      phone: '',
+                      clientId: clients[0]?.id || '',
+                      status: 'Active',
+                      assignedDeploymentIds: [],
+                      notes: ''
+                    });
+                    setShowSupervisorModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition-colors"
+                >
+                  <Plus size={14} />
+                  <span>Register Client Supervisor</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Integration Notice */}
+          <div className="p-3.5 bg-gradient-to-r from-teal-50/80 to-indigo-50/80 border border-teal-200/80 rounded-xl flex items-start gap-3 text-xs">
+            <ShieldCheck className="h-5 w-5 text-teal-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-bold text-slate-900 block">External Supervisor Access Pipeline</span>
+              <p className="text-slate-600 leading-relaxed">
+                External Client Supervisors log in via <strong className="font-mono text-teal-900">/client-portal/login</strong> with their registered email or invitation token. They only see employees deployed to their designated client organization. Attendance recorded and approved by supervisors is automatically marked <strong className="text-teal-800">Stage 1: Client Verified</strong> and routed to Tab 4 for Orbyx Internal HR final approval.
+              </p>
+            </div>
+          </div>
+
+          {/* Filters Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 flex-1">
+              <div className="relative min-w-[220px]">
+                <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search supervisor name, email, phone..."
+                  value={supervisorQuery}
+                  onChange={(e) => setSupervisorQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white"
+                />
+              </div>
+
+              <select
+                value={supervisorClientFilter}
+                onChange={(e) => setSupervisorClientFilter(e.target.value)}
+                className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white font-medium"
+              >
+                <option value="ALL">All Client Organizations</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={supervisorStatusFilter}
+                onChange={(e) => setSupervisorStatusFilter(e.target.value)}
+                className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white font-medium"
+              >
+                <option value="ALL">All Statuses</option>
+                <option value="Active">Active Only</option>
+                <option value="Inactive">Inactive Only</option>
+              </select>
+            </div>
+
+            <span className="text-xs text-slate-500 font-medium">
+              Showing {supervisors.length} supervisor(s)
+            </span>
+          </div>
+
+          {/* Supervisors Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/70 text-slate-600 font-bold">
+                  <th className="p-3">Supervisor Name</th>
+                  <th className="p-3">Client Organization</th>
+                  <th className="p-3">Contact Email & Phone</th>
+                  <th className="p-3">Account Status</th>
+                  <th className="p-3">Invitation Status</th>
+                  <th className="p-3">Assigned Deployments</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {supervisors
+                  .filter((s) => {
+                    if (supervisorClientFilter !== 'ALL' && s.clientId !== supervisorClientFilter) return false;
+                    if (supervisorStatusFilter !== 'ALL' && s.status !== supervisorStatusFilter) return false;
+                    if (supervisorQuery.trim()) {
+                      const q = supervisorQuery.toLowerCase();
+                      const match = `${s.id} ${s.name} ${s.officialEmail} ${s.phone} ${s.clientName}`.toLowerCase();
+                      if (!match.includes(q)) return false;
+                    }
+                    return true;
+                  })
+                  .map((sup) => {
+                    const client = clients.find((c) => c.id === sup.clientId);
+                    const isInactive = sup.status === 'Inactive';
+                    const assignedList = assignments.filter((a) =>
+                      sup.assignedDeploymentIds?.includes(a.id) || a.clientSupervisorId === sup.id
+                    );
+
+                    return (
+                      <tr key={sup.id} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="p-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="h-8 w-8 rounded-full bg-teal-500/10 text-teal-700 flex items-center justify-center font-bold text-xs border border-teal-200 shrink-0">
+                              {sup.name.slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <span className="font-bold text-slate-900 block">{sup.name}</span>
+                              <span className="text-[11px] font-mono text-slate-500 block">{sup.id}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className="font-semibold text-slate-800 block">{client?.name || sup.clientName || sup.clientId}</span>
+                          <span className="text-[10px] text-slate-500 block font-mono">{sup.clientId}</span>
+                        </td>
+                        <td className="p-3 font-mono text-[11px]">
+                          <span className="text-slate-800 block">{sup.officialEmail}</span>
+                          <span className="text-slate-500 block">{sup.phone}</span>
+                        </td>
+                        <td className="p-3">
+                          {isInactive ? (
+                            <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                              Inactive
+                            </span>
+                          ) : (
+                            <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              Active
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              sup.invitationStatus === 'Accepted'
+                                ? 'bg-teal-50 text-teal-800 border border-teal-200'
+                                : sup.invitationStatus === 'Expired'
+                                ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {sup.invitationStatus || 'Invited'}
+                          </span>
+                          {sup.invitationToken && (
+                            <span className="block text-[10px] font-mono text-slate-400 mt-0.5">
+                              {sup.invitationToken}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <span className="font-bold text-slate-800 block text-xs">
+                            {assignedList.length} employee(s)
+                          </span>
+                          <div className="flex flex-wrap gap-1 mt-1 max-w-xs">
+                            {assignedList.slice(0, 3).map((a) => {
+                              const emp = employees.find((e) => e.id === a.employeeId);
+                              return (
+                                <span
+                                  key={a.id}
+                                  className="text-[10px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-600 font-mono"
+                                  title={`${a.project} (${a.employeeId})`}
+                                >
+                                  {emp ? `${emp.firstName}` : a.employeeId}
+                                </span>
+                              );
+                            })}
+                            {assignedList.length > 3 && (
+                              <span className="text-[10px] text-slate-400">+{assignedList.length - 3} more</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {canAdmin && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingSupervisor(sup);
+                                    setSupervisorForm({
+                                      name: sup.name,
+                                      officialEmail: sup.officialEmail,
+                                      phone: sup.phone,
+                                      clientId: sup.clientId,
+                                      status: sup.status,
+                                      assignedDeploymentIds: sup.assignedDeploymentIds || [],
+                                      notes: sup.notes || ''
+                                    });
+                                    setShowSupervisorModal(true);
+                                  }}
+                                  className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
+                                  title="Edit supervisor"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextStatus = sup.status === 'Active' ? 'Inactive' : 'Active';
+                                    const updated: ClientSupervisor = { ...sup, status: nextStatus };
+                                    db.saveClientSupervisor(updated);
+                                    setNotice(
+                                      `Supervisor ${sup.name} marked ${nextStatus}. Inactive supervisors cannot access the Client Portal.`
+                                    );
+                                  }}
+                                  className={`px-2 py-1 rounded text-xs font-semibold ${
+                                    isInactive
+                                      ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                                      : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                                  }`}
+                                >
+                                  {isInactive ? 'Activate' : 'Deactivate'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInvitationModalSupervisor(sup);
+                                    setInvitationCopied(false);
+                                  }}
+                                  className="px-2 py-1 rounded bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-semibold border border-teal-200"
+                                  title="View Invitation Link & Token"
+                                >
+                                  Invite
+                                </button>
+                              </>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sup.status === 'Inactive') {
+                                  alert('Cannot launch portal: This supervisor account is Inactive.');
+                                  return;
+                                }
+                                localStorage.setItem(
+                                  'orbyx_hrms_supervisor_session',
+                                  JSON.stringify({
+                                    supervisor: sup,
+                                    sessionToken: `SUP-TOKEN-${Date.now()}`,
+                                    loginTimestamp: new Date().toISOString()
+                                  })
+                                );
+                                window.location.hash = '#client-portal';
+                              }}
+                              className="px-2 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold border border-indigo-200"
+                              title="Simulate entering Client Portal as this supervisor"
+                            >
+                              Launch Portal &rarr;
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* Tab 4: Client-Site Attendance & Multi-Stage Verification/Approval (Redesigned with 4 Internal Sections) */}
       {activeTab === 'attendance' && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-5">
           {/* Header & Quick Action Buttons */}
@@ -1608,7 +1941,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                 </h2>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                External Client Supervisor Email Verification (Stage 1 · No HRMS Login) &rarr; Internal Company Approval (Stage 2) &rarr; Payroll Processing Eligibility.
+                External Client Supervisor Email Verification (Stage 1 • No HRMS Login) &rarr; Internal Company Approval (Stage 2) &rarr; Payroll Processing Eligibility.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1797,7 +2130,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
               >
                 <option value="ALL">All Verification Statuses</option>
                 <option value="Pending Client Verification">Stage 1: Pending Client Email Verification</option>
-                <option value="Pending Manager Approval">Stage 2: Client Verified — Pending Company Approval</option>
+                <option value="Pending Manager Approval">Stage 2: Client Verified - Pending Company Approval</option>
                 <option value="Approved">Stage 3: Company Approved</option>
                 <option value="Disputed">Disputed</option>
               </select>
@@ -2048,15 +2381,15 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                           : 'bg-rose-50 text-rose-700 border border-rose-200'
                         }`}
                     >
-                      {cec.decision || 'Verified'} · {cec.coverageType || 'Single Date'}
+                      {cec.decision || 'Verified'} • {cec.coverageType || 'Single Date'}
                     </span>
                   </div>
                   <p className="font-semibold text-slate-900">
-                    {cec.employeeName || cec.employeeId} — {cec.clientName} ({cec.projectName})
+                    {cec.employeeName || cec.employeeId} - {cec.clientName} ({cec.projectName})
                   </p>
                   <p className="text-[11px] text-slate-600">{cec.summary}</p>
                   <p className="text-[10px] text-slate-400 font-mono">
-                    From: {cec.confirmedByEmail} · Msg: {cec.messageReference} · Logged by: {cec.recordedBy}
+                    From: {cec.confirmedByEmail} • Msg: {cec.messageReference} • Logged by: {cec.recordedBy}
                   </p>
                 </div>
               ))}
@@ -2067,7 +2400,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
 
       {/* View Client Modal */}
       {viewingClient && (
-        <Modal title={`Client Details — ${viewingClient.name}`} onClose={() => setViewingClient(null)}>
+        <Modal title={`Client Details - ${viewingClient.name}`} onClose={() => setViewingClient(null)}>
           <div className="space-y-3 text-xs">
             <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
               <div>
@@ -2084,7 +2417,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
               </div>
               <div>
                 <span className="text-slate-400 block">Email & Phone</span>
-                <span className="text-slate-700">{viewingClient.email} · {viewingClient.phone}</span>
+                <span className="text-slate-700">{viewingClient.email} • {viewingClient.phone}</span>
               </div>
               <div className="col-span-2">
                 <span className="text-slate-400 block">Registered Location</span>
@@ -2258,7 +2591,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                   .filter((e) => e.status !== 'Separated' && e.status !== 'Inactive')
                   .map((e) => (
                     <option key={e.id} value={e.id}>
-                      {e.id} — {e.firstName} {e.lastName}
+                      {e.id} - {e.firstName} {e.lastName}
                     </option>
                   ))}
               </select>
@@ -2498,7 +2831,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
             <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-indigo-950 space-y-1">
               <p className="font-bold">{loggingAssignment.project}</p>
               <p className="text-[11px] text-indigo-800">
-                Active Window: {loggingAssignment.startDate} to {loggingAssignment.actualEndDate || loggingAssignment.plannedEndDate || 'Open'} · Same-day office punches are automatically deduplicated for Payroll.
+                Active Window: {loggingAssignment.startDate} to {loggingAssignment.actualEndDate || loggingAssignment.plannedEndDate || 'Open'} • Same-day office punches are automatically deduplicated for Payroll.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -2585,7 +2918,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                   className={`${field} mt-1`}
                 >
                   <option value="Pending Client Verification">Stage 1: Pending Client Supervisor Verification</option>
-                  <option value="Pending Manager Approval">Stage 2: Client Verified — Pending Company HR/Mgr Approval</option>
+                  <option value="Pending Manager Approval">Stage 2: Client Verified - Pending Company HR/Mgr Approval</option>
                 </select>
               </label>
             </div>
@@ -2611,7 +2944,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       {/* Modal: View Attendance Record Details Drawer/Modal */}
       {viewingDetailRec && (
         <Modal
-          title={`Attendance Record Details — ${viewingDetailRec.employeeId} (${viewingDetailRec.date})`}
+          title={`Attendance Record Details - ${viewingDetailRec.employeeId} (${viewingDetailRec.date})`}
           onClose={() => setViewingDetailRec(null)}
         >
           <div className="space-y-3.5 text-xs">
@@ -2634,7 +2967,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
               <div>
                 <span className="text-slate-400 block text-[10px] uppercase font-bold">Client & Project</span>
                 <span className="font-semibold text-indigo-700">
-                  {clients.find((c) => c.id === viewingDetailRec.clientId)?.name || viewingDetailRec.clientId} · {viewingDetailRec.projectName || 'Client Engagement'}
+                  {clients.find((c) => c.id === viewingDetailRec.clientId)?.name || viewingDetailRec.clientId} • {viewingDetailRec.projectName || 'Client Engagement'}
                 </span>
               </div>
               <div>
@@ -2646,7 +2979,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
               <div>
                 <span className="text-slate-400 block text-[10px] uppercase font-bold">Source & Outcome</span>
                 <span className="font-medium text-slate-800">
-                  {viewingDetailRec.source || 'HRMS'} · Outcome: <strong>{viewingDetailRec.status || 'Present'}</strong>
+                  {viewingDetailRec.source || 'HRMS'} • Outcome: <strong>{viewingDetailRec.status || 'Present'}</strong>
                 </span>
               </div>
               <div>
@@ -2716,7 +3049,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                         <span>{h.stage}</span>
                         <span className="font-mono text-[10px] text-slate-400">{h.timestamp.slice(0, 16)}</span>
                       </div>
-                      <p className="text-slate-600">By {h.actorName} ({h.actorRole}) {h.decision ? `· Decision: ${h.decision}` : ''}</p>
+                      <p className="text-slate-600">By {h.actorName} ({h.actorRole}) {h.decision ? `• Decision: ${h.decision}` : ''}</p>
                       {h.comments && <p className="text-slate-500 italic mt-0.5">{h.comments}</p>}
                     </div>
                   ))}
@@ -2740,7 +3073,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       {/* Modal: Send / Preview Client Verification Email */}
       {sendEmailModalRec && (
         <Modal
-          title={`Send Client Verification Email — ${sendEmailModalRec.rec.employeeId} (${sendEmailModalRec.rec.date})`}
+          title={`Send Client Verification Email - ${sendEmailModalRec.rec.employeeId} (${sendEmailModalRec.rec.date})`}
           onClose={() => setSendEmailModalRec(null)}
         >
           <div className="space-y-3.5 text-xs">
@@ -2821,7 +3154,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       {/* Modal: Record Client Email Confirmation Response */}
       {recordClientEmailModal && (
         <Modal
-          title={`Record Client Email Confirmation — ${recordClientEmailModal.rec.employeeId} (${recordClientEmailModal.rec.date})`}
+          title={`Record Client Email Confirmation - ${recordClientEmailModal.rec.employeeId} (${recordClientEmailModal.rec.date})`}
           onClose={() => setRecordClientEmailModal(null)}
         >
           <form onSubmit={handleSaveClientEmailResponse} className="space-y-3.5 text-xs">
@@ -3015,7 +3348,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       {/* Modal: Client Dispute Resolution Interface */}
       {disputeModalRec && (
         <Modal
-          title={`Dispute Resolution — ${disputeModalRec.employeeId} (${disputeModalRec.date})`}
+          title={`Dispute Resolution - ${disputeModalRec.employeeId} (${disputeModalRec.date})`}
           onClose={() => setDisputeModalRec(null)}
         >
           <div className="space-y-4 text-xs">
@@ -3174,7 +3507,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
       {/* Modal: Company Attendance Approval */}
       {companyApprovalModal && (
         <Modal
-          title={`Stage 2: Internal Company Attendance Approval (${companyApprovalModal.rec.employeeId} · ${companyApprovalModal.rec.date})`}
+          title={`Stage 2: Internal Company Attendance Approval (${companyApprovalModal.rec.employeeId} • ${companyApprovalModal.rec.date})`}
           onClose={() => setCompanyApprovalModal(null)}
         >
           <div className="space-y-3.5 text-xs">
@@ -3230,6 +3563,329 @@ export const ClientManagement: React.FC<ClientManagementProps> = ({ navContext, 
                 className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg"
               >
                 Confirm Company Decision
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal: Register / Edit Client Supervisor */}
+      {showSupervisorModal && (
+        <Modal
+          title={editingSupervisor ? `Edit Supervisor: ${editingSupervisor.name}` : 'Register External Client Supervisor'}
+          onClose={() => {
+            setShowSupervisorModal(false);
+            setEditingSupervisor(null);
+          }}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const selectedClient = clients.find((c) => c.id === supervisorForm.clientId);
+              const nowIso = new Date().toISOString();
+
+              if (editingSupervisor) {
+                const updated: ClientSupervisor = {
+                  ...editingSupervisor,
+                  name: supervisorForm.name.trim(),
+                  officialEmail: supervisorForm.officialEmail.trim(),
+                  phone: supervisorForm.phone.trim(),
+                  clientId: supervisorForm.clientId,
+                  clientName: selectedClient?.name || editingSupervisor.clientName,
+                  status: supervisorForm.status,
+                  assignedDeploymentIds: supervisorForm.assignedDeploymentIds,
+                  notes: supervisorForm.notes
+                };
+                db.saveClientSupervisor(updated);
+                setNotice(`Updated client supervisor ${updated.name} successfully.`);
+              } else {
+                const id = `CSUP-${(supervisors.length + 101).toString()}`;
+                const token = `INV-${(selectedClient?.name || 'CLIENT').slice(0, 4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+                const newSup: ClientSupervisor = {
+                  id,
+                  name: supervisorForm.name.trim(),
+                  officialEmail: supervisorForm.officialEmail.trim(),
+                  phone: supervisorForm.phone.trim(),
+                  clientId: supervisorForm.clientId,
+                  clientName: selectedClient?.name || 'Client Org',
+                  status: supervisorForm.status,
+                  assignedDeploymentIds: supervisorForm.assignedDeploymentIds,
+                  invitationStatus: 'Invited',
+                  invitationToken: token,
+                  invitedAt: nowIso,
+                  notes: supervisorForm.notes
+                };
+                db.saveClientSupervisor(newSup);
+                setNotice(`Registered new supervisor ${newSup.name} (${newSup.id}) with token ${token}.`);
+              }
+
+              setShowSupervisorModal(false);
+              setEditingSupervisor(null);
+            }}
+            className="space-y-4 text-xs"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="font-semibold text-slate-700">
+                Supervisor Full Name *
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Vikramaditya Rao"
+                  value={supervisorForm.name}
+                  onChange={(e) => setSupervisorForm({ ...supervisorForm, name: e.target.value })}
+                  className={`${field} mt-1`}
+                />
+              </label>
+
+              <label className="font-semibold text-slate-700">
+                Official Corporate Email *
+                <input
+                  required
+                  type="email"
+                  placeholder="e.g. v.rao@apexfintech.example.com"
+                  value={supervisorForm.officialEmail}
+                  onChange={(e) => setSupervisorForm({ ...supervisorForm, officialEmail: e.target.value })}
+                  className={`${field} mt-1 font-mono`}
+                />
+              </label>
+
+              <label className="font-semibold text-slate-700">
+                Contact Phone Number *
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. +91 22 4091 8800"
+                  value={supervisorForm.phone}
+                  onChange={(e) => setSupervisorForm({ ...supervisorForm, phone: e.target.value })}
+                  className={`${field} mt-1 font-mono`}
+                />
+              </label>
+
+              <label className="font-semibold text-slate-700">
+                Client Organization *
+                <select
+                  required
+                  value={supervisorForm.clientId}
+                  onChange={(e) => setSupervisorForm({ ...supervisorForm, clientId: e.target.value })}
+                  className={`${field} mt-1 font-semibold`}
+                >
+                  <option value="">Select client...</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.id})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="font-semibold text-slate-700">
+                Portal Access Status
+                <select
+                  value={supervisorForm.status}
+                  onChange={(e) => setSupervisorForm({ ...supervisorForm, status: e.target.value as any })}
+                  className={`${field} mt-1`}
+                >
+                  <option value="Active">Active (Permitted to log in)</option>
+                  <option value="Inactive">Inactive (Access blocked)</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Assigned Deployments Mapping */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+              <span className="font-bold text-slate-700 block">
+                Assign Employee Deployments ({supervisorForm.clientId || 'Select client first'})
+              </span>
+              <p className="text-[11px] text-slate-500">
+                Check the employee assignments that this supervisor is authorized to record & verify in the Client Portal:
+              </p>
+
+              <div className="max-h-40 overflow-y-auto space-y-1.5 pt-1">
+                {assignments
+                  .filter((a) => !supervisorForm.clientId || a.clientId === supervisorForm.clientId)
+                  .map((a) => {
+                    const emp = employees.find((e) => e.id === a.employeeId);
+                    const isChecked = supervisorForm.assignedDeploymentIds.includes(a.id);
+                    return (
+                      <label
+                        key={a.id}
+                        className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors ${
+                          isChecked ? 'bg-indigo-50/70 border-indigo-200 text-indigo-950 font-semibold' : 'bg-white border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSupervisorForm({
+                                ...supervisorForm,
+                                assignedDeploymentIds: [...supervisorForm.assignedDeploymentIds, a.id]
+                              });
+                            } else {
+                              setSupervisorForm({
+                                ...supervisorForm,
+                                assignedDeploymentIds: supervisorForm.assignedDeploymentIds.filter((id) => id !== a.id)
+                              });
+                            }
+                          }}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <div className="flex-1">
+                          <span className="block font-medium">
+                            {emp ? `${emp.firstName} ${emp.lastName}` : a.employeeId} &bull; {a.project}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono block">
+                            {a.id} &bull; {a.location} ({a.workMode})
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                {assignments.filter((a) => !supervisorForm.clientId || a.clientId === supervisorForm.clientId).length === 0 && (
+                  <p className="text-slate-400 italic text-[11px] p-2">
+                    No deployments found for this client organization.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Internal Governance / Notes</label>
+              <textarea
+                rows={2}
+                value={supervisorForm.notes}
+                onChange={(e) => setSupervisorForm({ ...supervisorForm, notes: e.target.value })}
+                placeholder="e.g. Authorized to verify daily BKC onsite deployments and remote security staff."
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSupervisorModal(false);
+                  setEditingSupervisor(null);
+                }}
+                className="px-3.5 py-1.5 text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-2xs"
+              >
+                {editingSupervisor ? 'Save Changes' : 'Register Supervisor'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Client Supervisor Invitation Link & Token Simulator */}
+      {invitationModalSupervisor && (
+        <Modal
+          title={`Supervisor Portal Invitation: ${invitationModalSupervisor.name}`}
+          onClose={() => setInvitationModalSupervisor(null)}
+        >
+          <div className="space-y-4 text-xs">
+            <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl space-y-1 text-teal-900">
+              <div className="flex items-center gap-1.5 font-bold">
+                <CheckCircle2 size={16} className="text-teal-600" />
+                <span>Client Supervisor Portal Invitation Generator</span>
+              </div>
+              <p className="text-[11px] text-teal-800">
+                Share this prototype invitation link or token with <strong>{invitationModalSupervisor.name}</strong> ({invitationModalSupervisor.officialEmail}) to allow them to access their assigned employee deployments.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="font-semibold text-slate-700 block">Invitation Token</label>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={invitationModalSupervisor.invitationToken || 'INV-TOKEN-DEMO'}
+                  className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold text-sm text-slate-800"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(invitationModalSupervisor.invitationToken || '');
+                    setInvitationCopied(true);
+                    setTimeout(() => setInvitationCopied(false), 2000);
+                  }}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition-colors border border-slate-200"
+                >
+                  {invitationCopied ? 'Copied!' : 'Copy Token'}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1 font-mono text-[11px] p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-600">
+              <p><strong>Invitation Status:</strong> {invitationModalSupervisor.invitationStatus || 'Invited'}</p>
+              <p><strong>Invited At:</strong> {invitationModalSupervisor.invitedAt || 'Recent'}</p>
+              <p><strong>Client Organization:</strong> {invitationModalSupervisor.clientName || invitationModalSupervisor.clientId}</p>
+              <p><strong>Assigned Deployments:</strong> {invitationModalSupervisor.assignedDeploymentIds?.length || 0} assignment(s)</p>
+            </div>
+
+            {/* Simulated Invitation Actions */}
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  const refreshed: ClientSupervisor = {
+                    ...invitationModalSupervisor,
+                    invitationStatus: 'Invited',
+                    invitedAt: new Date().toISOString()
+                  };
+                  db.saveClientSupervisor(refreshed);
+                  setInvitationModalSupervisor(refreshed);
+                  setNotice(`Resent prototype invitation to ${refreshed.name}.`);
+                }}
+                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg border border-indigo-200"
+              >
+                Resend Invitation (Reset 72h window)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const expired: ClientSupervisor = {
+                    ...invitationModalSupervisor,
+                    invitationStatus: 'Expired'
+                  };
+                  db.saveClientSupervisor(expired);
+                  setInvitationModalSupervisor(expired);
+                  setNotice(`Simulated expiration of invitation token for ${expired.name}.`);
+                }}
+                className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold rounded-lg border border-amber-200"
+              >
+                Simulate Expired Token
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const activated: ClientSupervisor = {
+                    ...invitationModalSupervisor,
+                    invitationStatus: 'Accepted',
+                    lastLoginAt: new Date().toISOString()
+                  };
+                  db.saveClientSupervisor(activated);
+                  localStorage.setItem(
+                    'orbyx_hrms_supervisor_session',
+                    JSON.stringify({
+                      supervisor: activated,
+                      sessionToken: `SUP-TOKEN-${Date.now()}`,
+                      loginTimestamp: new Date().toISOString()
+                    })
+                  );
+                  window.location.hash = '#client-portal';
+                }}
+                className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg ml-auto shadow-2xs"
+              >
+                Accept & Launch Portal &rarr;
               </button>
             </div>
           </div>

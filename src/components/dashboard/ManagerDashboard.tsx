@@ -117,7 +117,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({ onNavigate }
 
 
 
-      {/* Team / Executive Metric Cards — Every Card Navigates with Deep Context */}
+      {/* Team / Executive Metric Cards - Every Card Navigates with Deep Context */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Direct Reports"

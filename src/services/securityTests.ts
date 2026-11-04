@@ -325,7 +325,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
                    permissionService.canApproveCompanyAttendance(hrAdmin, 'EMP-003');
     results.push({
       id: 'ATT-06',
-      scenario: 'Test 6: Scenario A — Missed punch correction + client email confirmation + Manager/HR approval',
+      scenario: 'Test 6: Scenario A - Missed punch correction + client email confirmation + Manager/HR approval',
       passed,
       expected: 'Missed check-out correction requires client email confirmation first, then internal Manager/HR approval, preserving original timestamps.',
       actual: 'Correction workflow enforces Stage 1 client email verification before Stage 2 Manager/HR approval.',
@@ -338,7 +338,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
     const canRecord = permissionService.canRecordClientEmailVerification(hrAdmin, 'EMP-003');
     results.push({
       id: 'ATT-07',
-      scenario: 'Test 7: Scenario B — Single-date client supervisor email confirmation recorded',
+      scenario: 'Test 7: Scenario B - Single-date client supervisor email confirmation recorded',
       passed: canRecord,
       expected: 'Authorized internal user logs single-date email confirmation with sender email, timestamp, subject, and message reference.',
       actual: 'Single-date ClientEmailConfirmation logged and linked to attendance record.',
@@ -351,7 +351,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
     const canRecord = permissionService.canRecordClientEmailVerification(hrAdmin, 'EMP-003');
     results.push({
       id: 'ATT-08',
-      scenario: 'Test 8: Scenario B — Multi-date / weekly timesheet email confirmation without duplicate records',
+      scenario: 'Test 8: Scenario B - Multi-date / weekly timesheet email confirmation without duplicate records',
       passed: canRecord,
       expected: 'Weekly timesheet email confirmation updates existing records across covered dates without creating duplicate attendance rows.',
       actual: 'Existing records updated in-place across covered dates; 0 duplicate attendance records created.',
@@ -392,7 +392,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
     const passed = true;
     results.push({
       id: 'ATT-11',
-      scenario: 'Test 11: Scenario C — Machine/Server outage historical manual entry with incident reference',
+      scenario: 'Test 11: Scenario C - Machine/Server outage historical manual entry with incident reference',
       passed,
       expected: 'Outage manual entry stores actual attendance date separately from entry date, links outage incident reference, and prevents duplicate punches.',
       actual: 'ATT-CLI-SCEN-C-001 stores date=2026-10-20, entryDate=2026-10-21, outageIncidentRef=INC-2026-1020-BIO.',
@@ -405,7 +405,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
     const passed = true;
     results.push({
       id: 'ATT-12',
-      scenario: 'Test 12: Scenario D — Client supervisor disputes working hours via email -> Status becomes Disputed',
+      scenario: 'Test 12: Scenario D - Client supervisor disputes working hours via email -> Status becomes Disputed',
       passed,
       expected: 'Recording a client email dispute sets clientVerificationStatus = Disputed, companyApprovalStatus = Pending, and payrollEligibilityStatus = Not Eligible.',
       actual: 'ATT-CLI-SCEN-D-001 marked Disputed with clientClaimedHours=6.0 vs originalHours=8.5.',
@@ -418,7 +418,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
     const passed = true;
     results.push({
       id: 'ATT-13',
-      scenario: 'Test 13: Scenario D — Employee clarification & internal Manager/HR dispute resolution preserves original values',
+      scenario: 'Test 13: Scenario D - Employee clarification & internal Manager/HR dispute resolution preserves original values',
       passed,
       expected: 'Clarification & evidence saved; Manager/HR resolution preserves originalCheckIn, originalCheckOut, originalHours, client dispute, and resolution reason.',
       actual: 'Original timestamps (09:30-19:00, 8.5h), client claim (6.0h), employee clarification, and resolution history preserved.',

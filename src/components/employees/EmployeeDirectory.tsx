@@ -1110,7 +1110,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         onClose={() => setSelectedEmployee(null)}
       />
 
-            {/* Edit Employee Modal — Comprehensive Multi-Section / Tabbed Form */}
+            {/* Edit Employee Modal - Comprehensive Multi-Section / Tabbed Form */}
       {editingEmployee && isHR && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <form
@@ -1123,7 +1123,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <Edit3 className="h-4 w-4 text-indigo-600" />
                   <span>Edit Employee Record: {editingEmployee.firstName} {editingEmployee.lastName} ({editingEmployee.id})</span>
                 </h4>
-                <p className="text-slate-500">Comprehensive HR administration — update personal, employment, org, compensation, statutory, and insurance details.</p>
+                <p className="text-slate-500">Comprehensive HR administration - update personal, employment, org, compensation, statutory, and insurance details.</p>
               </div>
               <button
                 type="button"

@@ -1,3 +1,4 @@
+// Orbyx HRMS New Employee Modal - 4-stage registration
 import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { PhotoCaptureField } from '../common/PhotoCaptureField';
@@ -376,7 +377,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
       isOpen={isOpen}
       onClose={onClose}
       title="Employee Onboarding Setup"
-      description={`Comprehensive corporate employee registration — Assigned ID: ${nextId}`}
+      description={`Comprehensive corporate employee registration - Assigned ID: ${nextId}`}
       maxWidth="3xl"
     >
       <div className="space-y-4 text-xs">
@@ -395,8 +396,8 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                 {completeness.status === 'Not Started'
                   ? 'Not Started'
                   : completeness.status === 'Complete'
-                  ? '100% — Complete'
-                  : `${completeness.percentage}% — In Progress`}
+                  ? '100% - Complete'
+                  : `${completeness.percentage}% - In Progress`}
               </span>
             </div>
             <span className="text-[11px] text-slate-500 font-mono">Assigned ID: {nextId}</span>
@@ -1158,7 +1159,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                       <div>
                         <span className="font-medium text-slate-800 block">{doc.name}</span>
                         <span className="text-[11px] text-slate-400">
-                          {doc.category} — {doc.fileSize} — Initial Status: Pending Verification
+                          {doc.category} - {doc.fileSize} - Initial Status: Pending Verification
                         </span>
                       </div>
                     </div>

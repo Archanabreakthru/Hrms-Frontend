@@ -198,7 +198,7 @@ export const permissionService = {
    * Field Filtering & Authorization Enforcement:
    * Returns ONLY the fields permitted for that relationship and role.
    * Strips out all confidential fields when viewed by a colleague.
-   * Pure read function — safe to call during React render without side-effects.
+   * Pure read function - safe to call during React render without side-effects.
    */
   getAuthorizedProfile(targetEmployeeId: string, currentUser: CurrentUser): ProfileViewResult | null {
     const raw = db.getEmployeeById(targetEmployeeId);
@@ -337,7 +337,7 @@ export const permissionService = {
 
   canEditSalary(targetEmployeeId: string, currentUser: CurrentUser): boolean {
     if (!this.isInternalCompanyUser(currentUser)) return false;
-    // Strictly HR Admin — employees can NEVER edit their own salary or banking
+    // Strictly HR Admin - employees can NEVER edit their own salary or banking
     return currentUser.role === 'hr_admin' && this.hasPermission(currentUser.role, 'employee.salary.edit');
   },
 

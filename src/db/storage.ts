@@ -26,7 +26,8 @@ import {
   ClientEmailConfirmation,
   PolicyAcknowledgement,
   DelegationRecord,
-  InsurancePolicyRecord
+  InsurancePolicyRecord,
+  ClientSupervisor
 } from '../types/hrms';
 import {
   initialCompanyProfile,
@@ -83,7 +84,7 @@ export const initialGovernanceMembers: GovernanceMember[] = [
     effectiveFrom: '2022-04-01',
     isActive: true,
     isPayrollEmployee: false,
-    committeeRole: 'Chairperson — Audit, Risk & Remuneration Committee',
+    committeeRole: 'Chairperson - Audit, Risk & Remuneration Committee',
     notes: 'Independent non-executive Board Member overseeing statutory compliance and executive governance.',
     updatedAt: '2026-10-01',
     updatedBy: 'Rajeshwari Nair (Super Admin)'
@@ -449,7 +450,7 @@ export const initialPolicies: PolicyRule[] = [
     name: 'FY 2027 Hybrid Work & Flexi-Shift Proposal (Draft)',
     module: 'Attendance',
     description: 'Proposed policy update for 3-day office / 2-day remote work schedule pending MD and Founder review.',
-    rulesSummary: 'Draft Only (Hidden from regular employees until Published) · Core hours 11:00–16:00 · Requires MD approval.',
+    rulesSummary: 'Draft Only (Hidden from regular employees until Published) · Core hours 11:00-16:00 · Requires MD approval.',
     parameters: { officeDaysPerWeek: 3, remoteDaysPerWeek: 2, coreStartHour: 11 },
     effectiveFrom: '2027-01-01',
     reviewExpiryDate: '2027-12-31',
@@ -648,12 +649,79 @@ export function resetToSeedData(): void {
     JSON.stringify(initialPolicyAcknowledgements)
   );
   localStorage.setItem(DB_PREFIX + 'delegations', JSON.stringify(initialDelegations));
+  localStorage.setItem(
+    DB_PREFIX + 'clientSupervisors',
+    JSON.stringify(initialClientSupervisors)
+  );
   localStorage.setItem(DB_PREFIX + 'initialized', 'true');
   seedRealisticDemoRequests();
   notifySubscribers();
 }
 
 // ---------------- TYPED REPOSITORIES ----------------
+
+export const initialClientSupervisors: ClientSupervisor[] = [
+  {
+    id: 'CSUP-101',
+    clientId: 'CLI-101',
+    clientName: 'Apex FinTech Global',
+    name: 'Vikramaditya Rao',
+    officialEmail: 'v.rao@apexfintech.example.com',
+    phone: '+91 22 4091 8800',
+    status: 'Active',
+    assignedDeploymentIds: ['CAS-201', 'CAS-203'],
+    invitationStatus: 'Accepted',
+    invitationToken: 'INV-APEX-RAO-9821',
+    invitedAt: '2026-03-15T09:00:00Z',
+    acceptedAt: '2026-03-15T10:30:00Z',
+    lastLoginAt: '2026-11-03T09:15:00Z',
+    notes: 'Primary supervisor for Apex FinTech deployments. Authorized to record and approve daily onsite and remote attendance.'
+  },
+  {
+    id: 'CSUP-102',
+    clientId: 'CLI-102',
+    clientName: 'Horizon Retail Systems',
+    name: 'Meera Krishnan',
+    officialEmail: 'meera.k@horizonretail.example.com',
+    phone: '+91 80 4112 7300',
+    status: 'Active',
+    assignedDeploymentIds: ['CAS-202'],
+    invitationStatus: 'Accepted',
+    invitationToken: 'INV-HORIZON-MEERA-4412',
+    invitedAt: '2026-04-01T11:00:00Z',
+    acceptedAt: '2026-04-01T14:20:00Z',
+    lastLoginAt: '2026-11-02T16:45:00Z',
+    notes: 'Delivery lead and supervisor for Horizon Omnichannel deployments.'
+  },
+  {
+    id: 'CSUP-103',
+    clientId: 'CLI-101',
+    clientName: 'Apex FinTech Global',
+    name: 'Rohan Mehta',
+    officialEmail: 'rohan.m@apexfintech.example.com',
+    phone: '+91 22 4091 8899',
+    status: 'Inactive',
+    assignedDeploymentIds: [],
+    invitationStatus: 'Revoked',
+    invitationToken: 'INV-APEX-MEHTA-9901',
+    invitedAt: '2026-02-01T10:00:00Z',
+    notes: 'Account deactivated by Orbyx HR Admin (Test case for inactive account restriction).'
+  },
+  {
+    id: 'CSUP-104',
+    clientId: 'CLI-102',
+    clientName: 'Horizon Retail Systems',
+    name: 'Ananya Verma',
+    officialEmail: 'ananya.v@horizonretail.example.com',
+    phone: '+91 80 4112 7311',
+    status: 'Active',
+    assignedDeploymentIds: ['CAS-202'],
+    invitationStatus: 'Expired',
+    invitationToken: 'INV-HORIZON-ANANYA-EXP-772',
+    invitedAt: '2026-09-01T10:00:00Z',
+    notes: 'Invitation expired (Test case for expired invitation link).'
+  }
+];
 
 export const db = {
   // Company Profile
@@ -1101,6 +1169,25 @@ export const db = {
   deleteInsurancePolicy(policyId: string): void {
     const list = this.getInsurancePolicies().filter((p) => p.id !== policyId);
     setItem('insurancePolicies', list);
+  },
+
+  // Client Supervisors
+  getClientSupervisors(): ClientSupervisor[] {
+    return getItem<ClientSupervisor[]>('clientSupervisors', initialClientSupervisors);
+  },
+  getClientSupervisorById(id: string): ClientSupervisor | undefined {
+    return this.getClientSupervisors().find((s) => s.id === id);
+  },
+  saveClientSupervisor(sup: ClientSupervisor): void {
+    const list = this.getClientSupervisors();
+    const idx = list.findIndex((s) => s.id === sup.id);
+    if (idx >= 0) list[idx] = sup;
+    else list.unshift(sup);
+    setItem('clientSupervisors', list);
+  },
+  deleteClientSupervisor(id: string): void {
+    const list = this.getClientSupervisors().filter((s) => s.id !== id);
+    setItem('clientSupervisors', list);
   }
 };
 

@@ -1069,5 +1069,33 @@ export interface NavigationContext {
   highlightAction?: string;
 }
 
+// ---------------------------------------------------------------------------
+// External Client Supervisor Portal Types
+// ---------------------------------------------------------------------------
+
+export interface ClientSupervisor {
+  id: string; // e.g. 'CSUP-101'
+  clientId: string; // references ClientRecord.id (e.g. 'CLI-101')
+  clientName?: string;
+  name: string;
+  officialEmail: string;
+  phone: string;
+  status: 'Active' | 'Inactive';
+  assignedDeploymentIds: string[]; // references AssignmentRecord.id
+  invitationStatus: 'Invited' | 'Accepted' | 'Expired' | 'Revoked';
+  invitationToken: string;
+  invitedAt: string;
+  acceptedAt?: string;
+  lastLoginAt?: string;
+  notes?: string;
+}
+
+export interface SupervisorSession {
+  supervisor: ClientSupervisor;
+  sessionToken: string;
+  loginTimestamp: string;
+}
+
+
 
 
