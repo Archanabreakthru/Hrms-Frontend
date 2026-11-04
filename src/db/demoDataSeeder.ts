@@ -448,7 +448,7 @@ export function seedRealisticDemoRequests(): {
         }
       ]
     },
-    // Scenario B (Both Stages Complete — Eligible for Draft Payroll): Archana (EMP-003 at Apex FinTech CAS-201)
+    // Scenario B (Both Stages Complete - Eligible for Draft Payroll): Archana (EMP-003 at Apex FinTech CAS-201)
     {
       id: 'ATT-CLI-SCEN-B-002',
       employeeId: 'EMP-003',

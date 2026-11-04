@@ -742,7 +742,7 @@ export const AssetManagement: React.FC<AssetManagementProps> = ({ navContext, on
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4 text-xs">
             <h4 className="text-base font-bold text-slate-900">
-              Deactivate Asset — {deactivatingAsset.assetTag}
+              Deactivate Asset - {deactivatingAsset.assetTag}
             </h4>
             {deactivatingAsset.status === 'Allocated' || deactivatingAsset.status === 'In Use' ? (
               <div className="space-y-3">
@@ -815,7 +815,7 @@ export const AssetManagement: React.FC<AssetManagementProps> = ({ navContext, on
             onSubmit={handleSaveEditAsset}
             className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-3 text-xs"
           >
-            <h4 className="text-base font-bold text-slate-900">Edit Asset — {editingAsset.assetTag}</h4>
+            <h4 className="text-base font-bold text-slate-900">Edit Asset - {editingAsset.assetTag}</h4>
             <label className="block font-semibold text-slate-700">
               Asset Name *
               <input

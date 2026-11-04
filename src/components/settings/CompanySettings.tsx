@@ -415,7 +415,7 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                       </td>
                       <td className="p-2.5 text-slate-600">
                         {u.role === 'senior_manager'
-                          ? 'Managing Director (MD) — Executive Oversight & Final Approvals'
+                          ? 'Managing Director (MD) - Executive Oversight & Final Approvals'
                           : u.role === 'hr_admin'
                             ? 'Full Organization, Policy & Confidential Payroll'
                             : u.role === 'reporting_manager'

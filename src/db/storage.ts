@@ -1,4 +1,5 @@
 import {
+  ServiceRecord,
   CompanyProfile,
   Branch,
   Department,
@@ -24,7 +25,9 @@ import {
   GovernanceHistoryEntry,
   ClientEmailConfirmation,
   PolicyAcknowledgement,
-  DelegationRecord
+  DelegationRecord,
+  InsurancePolicyRecord,
+  ClientSupervisor
 } from '../types/hrms';
 import {
   initialCompanyProfile,
@@ -46,7 +49,8 @@ import {
   initialPayrollRuns,
   initialPayrollLineItems,
   initialAuditLogs,
-  initialNotifications
+  initialNotifications,
+  initialServiceRecords
 } from './initialData';
 import { seedRealisticDemoRequests } from './demoDataSeeder';
 
@@ -80,7 +84,7 @@ export const initialGovernanceMembers: GovernanceMember[] = [
     effectiveFrom: '2022-04-01',
     isActive: true,
     isPayrollEmployee: false,
-    committeeRole: 'Chairperson — Audit, Risk & Remuneration Committee',
+    committeeRole: 'Chairperson - Audit, Risk & Remuneration Committee',
     notes: 'Independent non-executive Board Member overseeing statutory compliance and executive governance.',
     updatedAt: '2026-10-01',
     updatedBy: 'Rajeshwari Nair (Super Admin)'
@@ -446,7 +450,7 @@ export const initialPolicies: PolicyRule[] = [
     name: 'FY 2027 Hybrid Work & Flexi-Shift Proposal (Draft)',
     module: 'Attendance',
     description: 'Proposed policy update for 3-day office / 2-day remote work schedule pending MD and Founder review.',
-    rulesSummary: 'Draft Only (Hidden from regular employees until Published) · Core hours 11:00–16:00 · Requires MD approval.',
+    rulesSummary: 'Draft Only (Hidden from regular employees until Published) · Core hours 11:00-16:00 · Requires MD approval.',
     parameters: { officeDaysPerWeek: 3, remoteDaysPerWeek: 2, coreStartHour: 11 },
     effectiveFrom: '2027-01-01',
     reviewExpiryDate: '2027-12-31',
@@ -542,18 +546,67 @@ export function initDatabase(): void {
   if (!localStorage.getItem(DB_PREFIX + 'initialized')) {
     resetToSeedData();
   } else {
-    // One-time migration to ensure EMP-000 (MD) photo matches his canonical executive portrait if still using old seed string
     try {
       const emps = getItem<Employee[]>('employees', initialEmployees);
-      const mdIdx = emps.findIndex((e) => e.id === 'EMP-000');
-      if (
-        mdIdx >= 0 &&
-        emps[mdIdx].avatarUrl ===
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'
-      ) {
-        emps[mdIdx].avatarUrl =
-          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80';
-        localStorage.setItem(DB_PREFIX + 'employees', JSON.stringify(emps));
+      // Migration to standardized designation-based IDs
+      const hasOldIdFormat = emps.some((e) => e.id.match(/^EMP-\d{3}$/));
+      const hasDummy = emps.some((e) => (e.id === 'EMP-001' || e.id === 'EMP-HRM-0012') && (e.firstName === 'Anamika' || !e.firstName));
+      if (hasOldIdFormat || hasDummy) {
+        // Automatically migrate existing stored records to designation-based IDs
+        const mapping: Record<string, string> = {
+          'EMP-000': 'EMP-MD-0001',
+          'EMP-010': 'EMP-STF-0002',
+          'EMP-002': 'EMP-SDM-0003',
+          'EMP-003': 'EMP-SWE-0004',
+          'EMP-011': 'EMP-SWE-0005',
+          'EMP-012': 'EMP-SWE-0006',
+          'EMP-004': 'EMP-SWE-0007',
+          'EMP-015': 'EMP-SWE-0008',
+          'EMP-014': 'EMP-SWE-0009',
+          'EMP-013': 'EMP-SWE-0010',
+          'EMP-016': 'EMP-SWE-0011',
+          'EMP-001': 'EMP-HRM-0012',
+          'EMP-017': 'EMP-FAC-0013',
+          'EMP-018': 'EMP-DEVOPS-0014'
+        };
+
+        const migratedEmps = emps.map((emp) => {
+          const newId = mapping[emp.id] || emp.id;
+          const newMgrId = emp.reportingManagerId ? (mapping[emp.reportingManagerId] || emp.reportingManagerId) : undefined;
+          return {
+            ...emp,
+            id: newId,
+            originalLegacyId: emp.originalLegacyId || (mapping[emp.id] ? emp.id : undefined),
+            reportingManagerId: newMgrId
+          };
+        });
+
+        // Ensure canonical records are present if list was empty
+        const merged = migratedEmps.length >= initialEmployees.length ? migratedEmps : initialEmployees;
+        // Ensure relationships match updated organization structure:
+        // S. Kannan (EMP-STF-0002) -> Raseedh (EMP-HRM-0012) & Bhava Dharani (EMP-DEVOPS-0014)
+        // Raseedh (EMP-HRM-0012) -> Gowtham (EMP-FAC-0013)
+        const reconciledEmps = merged.map((emp) => {
+          if (emp.id === 'EMP-FAC-0013' || emp.originalLegacyId === 'EMP-017') {
+            return { ...emp, reportingManagerId: 'EMP-HRM-0012' };
+          }
+          if (emp.id === 'EMP-HRM-0012' || emp.originalLegacyId === 'EMP-001') {
+            return { ...emp, reportingManagerId: 'EMP-STF-0002' };
+          }
+          return emp;
+        });
+
+        // Ensure Bhava Dharani is present
+        const hasBhava = reconciledEmps.some((e) => e.id === 'EMP-DEVOPS-0014' || e.firstName.includes('Bhava'));
+        if (!hasBhava) {
+          const bhavaFromInitial = initialEmployees.find((e) => e.id === 'EMP-DEVOPS-0014');
+          if (bhavaFromInitial) reconciledEmps.push(bhavaFromInitial);
+        }
+
+        setItem('employees', reconciledEmps);
+        setItem('serviceRecords', initialServiceRecords);
+        setItem('designations', initialDesignations);
+        setItem('departments', initialDepartments);
       }
     } catch {
       // ignore
@@ -573,6 +626,7 @@ export function resetToSeedData(): void {
   localStorage.setItem(DB_PREFIX + 'salaryComponents', JSON.stringify(initialSalaryComponents));
   localStorage.setItem(DB_PREFIX + 'salaryStructures', JSON.stringify(initialSalaryStructures));
   localStorage.setItem(DB_PREFIX + 'employees', JSON.stringify(initialEmployees));
+  localStorage.setItem(DB_PREFIX + 'serviceRecords', JSON.stringify(initialServiceRecords));
   localStorage.setItem(DB_PREFIX + 'leaveApplications', JSON.stringify(initialLeaveApplications));
   localStorage.setItem(DB_PREFIX + 'expenseCategories', JSON.stringify(initialExpenseCategories));
   localStorage.setItem(DB_PREFIX + 'expenseClaims', JSON.stringify(initialExpenseClaims));
@@ -595,12 +649,79 @@ export function resetToSeedData(): void {
     JSON.stringify(initialPolicyAcknowledgements)
   );
   localStorage.setItem(DB_PREFIX + 'delegations', JSON.stringify(initialDelegations));
+  localStorage.setItem(
+    DB_PREFIX + 'clientSupervisors',
+    JSON.stringify(initialClientSupervisors)
+  );
   localStorage.setItem(DB_PREFIX + 'initialized', 'true');
   seedRealisticDemoRequests();
   notifySubscribers();
 }
 
 // ---------------- TYPED REPOSITORIES ----------------
+
+export const initialClientSupervisors: ClientSupervisor[] = [
+  {
+    id: 'CSUP-101',
+    clientId: 'CLI-101',
+    clientName: 'Apex FinTech Global',
+    name: 'Vikramaditya Rao',
+    officialEmail: 'v.rao@apexfintech.example.com',
+    phone: '+91 22 4091 8800',
+    status: 'Active',
+    assignedDeploymentIds: ['CAS-201', 'CAS-203'],
+    invitationStatus: 'Accepted',
+    invitationToken: 'INV-APEX-RAO-9821',
+    invitedAt: '2026-03-15T09:00:00Z',
+    acceptedAt: '2026-03-15T10:30:00Z',
+    lastLoginAt: '2026-11-03T09:15:00Z',
+    notes: 'Primary supervisor for Apex FinTech deployments. Authorized to record and approve daily onsite and remote attendance.'
+  },
+  {
+    id: 'CSUP-102',
+    clientId: 'CLI-102',
+    clientName: 'Horizon Retail Systems',
+    name: 'Meera Krishnan',
+    officialEmail: 'meera.k@horizonretail.example.com',
+    phone: '+91 80 4112 7300',
+    status: 'Active',
+    assignedDeploymentIds: ['CAS-202'],
+    invitationStatus: 'Accepted',
+    invitationToken: 'INV-HORIZON-MEERA-4412',
+    invitedAt: '2026-04-01T11:00:00Z',
+    acceptedAt: '2026-04-01T14:20:00Z',
+    lastLoginAt: '2026-11-02T16:45:00Z',
+    notes: 'Delivery lead and supervisor for Horizon Omnichannel deployments.'
+  },
+  {
+    id: 'CSUP-103',
+    clientId: 'CLI-101',
+    clientName: 'Apex FinTech Global',
+    name: 'Rohan Mehta',
+    officialEmail: 'rohan.m@apexfintech.example.com',
+    phone: '+91 22 4091 8899',
+    status: 'Inactive',
+    assignedDeploymentIds: [],
+    invitationStatus: 'Revoked',
+    invitationToken: 'INV-APEX-MEHTA-9901',
+    invitedAt: '2026-02-01T10:00:00Z',
+    notes: 'Account deactivated by Orbyx HR Admin (Test case for inactive account restriction).'
+  },
+  {
+    id: 'CSUP-104',
+    clientId: 'CLI-102',
+    clientName: 'Horizon Retail Systems',
+    name: 'Ananya Verma',
+    officialEmail: 'ananya.v@horizonretail.example.com',
+    phone: '+91 80 4112 7311',
+    status: 'Active',
+    assignedDeploymentIds: ['CAS-202'],
+    invitationStatus: 'Expired',
+    invitationToken: 'INV-HORIZON-ANANYA-EXP-772',
+    invitedAt: '2026-09-01T10:00:00Z',
+    notes: 'Invitation expired (Test case for expired invitation link).'
+  }
+];
 
 export const db = {
   // Company Profile
@@ -678,7 +799,8 @@ export const db = {
     return getItem<Employee[]>('employees', initialEmployees);
   },
   getEmployeeById(id: string): Employee | undefined {
-    return this.getEmployees().find((e) => e.id === id);
+    if (!id) return undefined;
+    return this.getEmployees().find((e) => e.id === id || e.originalLegacyId === id);
   },
   getEmployeeByUserId(userId: string): Employee | undefined {
     return this.getEmployees().find((e) => e.userId === userId);
@@ -689,6 +811,23 @@ export const db = {
     if (idx >= 0) list[idx] = emp;
     else list.push(emp);
     setItem('employees', list);
+  },
+
+  // Service Records
+  getServiceRecords(): ServiceRecord[] {
+    return getItem<ServiceRecord[]>('serviceRecords', initialServiceRecords);
+  },
+  getServiceRecordsByEmployeeId(employeeId: string): ServiceRecord[] {
+    return this.getServiceRecords()
+      .filter((r) => r.employeeId === employeeId)
+      .sort((a, b) => new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime());
+  },
+  saveServiceRecord(record: ServiceRecord): void {
+    const list = this.getServiceRecords();
+    const idx = list.findIndex((r) => r.id === record.id);
+    if (idx >= 0) list[idx] = record;
+    else list.push(record);
+    setItem('serviceRecords', list);
   },
 
   // Shifts
@@ -1010,6 +1149,45 @@ export const db = {
     if (idx >= 0) list[idx] = del;
     else list.unshift(del);
     setItem('delegations', list);
+  },
+
+  // Insurance Policies & Nominees
+  getInsurancePolicies(): InsurancePolicyRecord[] {
+    return getItem<InsurancePolicyRecord[]>('insurancePolicies', []);
+  },
+  getInsurancePoliciesByEmployeeId(employeeId: string): InsurancePolicyRecord[] {
+    const all = this.getInsurancePolicies();
+    return all.filter((p) => p.employeeId === employeeId);
+  },
+  saveInsurancePolicy(policy: InsurancePolicyRecord): void {
+    const list = this.getInsurancePolicies();
+    const idx = list.findIndex((p) => p.id === policy.id);
+    if (idx >= 0) list[idx] = policy;
+    else list.unshift(policy);
+    setItem('insurancePolicies', list);
+  },
+  deleteInsurancePolicy(policyId: string): void {
+    const list = this.getInsurancePolicies().filter((p) => p.id !== policyId);
+    setItem('insurancePolicies', list);
+  },
+
+  // Client Supervisors
+  getClientSupervisors(): ClientSupervisor[] {
+    return getItem<ClientSupervisor[]>('clientSupervisors', initialClientSupervisors);
+  },
+  getClientSupervisorById(id: string): ClientSupervisor | undefined {
+    return this.getClientSupervisors().find((s) => s.id === id);
+  },
+  saveClientSupervisor(sup: ClientSupervisor): void {
+    const list = this.getClientSupervisors();
+    const idx = list.findIndex((s) => s.id === sup.id);
+    if (idx >= 0) list[idx] = sup;
+    else list.unshift(sup);
+    setItem('clientSupervisors', list);
+  },
+  deleteClientSupervisor(id: string): void {
+    const list = this.getClientSupervisors().filter((s) => s.id !== id);
+    setItem('clientSupervisors', list);
   }
 };
 

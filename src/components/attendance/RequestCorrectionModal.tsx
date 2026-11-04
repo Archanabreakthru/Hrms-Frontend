@@ -266,7 +266,7 @@ export const RequestCorrectionModal: React.FC<RequestCorrectionModalProps> = ({
                 const cli = clients.find((c) => c.id === d.clientId);
                 return (
                   <option key={d.id} value={d.id}>
-                    {d.id}: {cli?.name || d.clientId} — {d.project} ({d.status})
+                    {d.id}: {cli?.name || d.clientId} - {d.project} ({d.status})
                   </option>
                 );
               })}
@@ -305,10 +305,10 @@ export const RequestCorrectionModal: React.FC<RequestCorrectionModalProps> = ({
                 Conflict Detection: Existing Attendance Record on {date} ({existingRecord.source})
               </p>
               <p className="text-[11px] text-amber-800 mt-0.5">
-                Original values — In:{' '}
+                Original values - In:{' '}
                 <span className="font-mono font-bold">{existingRecord.checkInTime || '--:--'}</span> | Out:{' '}
                 <span className="font-mono font-bold">{existingRecord.checkOutTime || '--:--'}</span> (
-                {existingRecord.totalHoursWorked}h, {existingRecord.status}) — will be preserved in{' '}
+                {existingRecord.totalHoursWorked}h, {existingRecord.status}) - will be preserved in{' '}
                 <code className="font-mono">originalCheckIn / originalCheckOut</code> for audit history without creating duplicate records.
               </p>
             </div>

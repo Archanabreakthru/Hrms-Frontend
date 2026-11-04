@@ -263,7 +263,7 @@ export const PoliciesHub: React.FC<PoliciesHubProps> = ({ initialCategory = 'ALL
                 <option value="ALL">All Published Policies ({publishedPolicies.length})</option>
                 {publishedPolicies.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.code} (v{p.versionNumber || '1.0'}) — {p.name}
+                    {p.code} (v{p.versionNumber || '1.0'}) - {p.name}
                   </option>
                 ))}
               </select>
@@ -369,7 +369,7 @@ export const PoliciesHub: React.FC<PoliciesHubProps> = ({ initialCategory = 'ALL
                     </td>
                     <td className="p-3 font-mono text-slate-700">{row.acknowledgedAt}</td>
                     <td className="p-3 font-mono text-[11px] text-slate-500">
-                      {row.priorVersionAcks || '—'}
+                      {row.priorVersionAcks || '-'}
                     </td>
                   </tr>
                 ))}

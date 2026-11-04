@@ -61,7 +61,7 @@ export const ReportsHub: React.FC = () => {
           Date: r.date,
           WorkMode: r.workMode || 'Office',
           ClientOrganization: cli?.name || (r.workMode === 'Client Site' ? r.clientId || 'Client Site' : 'Internal Office'),
-          ProjectDeployment: asg?.project || r.projectName || '—',
+          ProjectDeployment: asg?.project || r.projectName || '-',
           CheckIn: r.checkInTime || '--:--',
           CheckOut: r.checkOutTime || '--:--',
           HoursWorked: r.totalHoursWorked,
@@ -69,7 +69,7 @@ export const ReportsHub: React.FC = () => {
           ClientVerification: cVer,
           CompanyApproval: cApp,
           PayrollProcessing: pElig,
-          ClientSupervisorEmail: r.clientSupervisorEmail || asg?.clientSupervisorEmail || '—'
+          ClientSupervisorEmail: r.clientSupervisorEmail || asg?.clientSupervisorEmail || '-'
         };
       });
   }, [
