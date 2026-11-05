@@ -82,12 +82,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       access: canAccessModule('hr')
     },
     {
-      id: 'service_records',
-      label: 'Service Records',
-      icon: Award,
-      access: canAccessModule('service_records')
-    },
-    {
       id: 'clients',
       label: 'Client Management',
       icon: BriefcaseBusiness,

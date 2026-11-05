@@ -22,6 +22,7 @@ import { calculateProfileCompleteness } from '../../utils/profileUtils';
 import { EmployeeProfileModal } from './EmployeeProfileModal';
 import { NewEmployeeModal } from './NewEmployeeModal';
 import { OrgChart } from './OrgChart';
+import { ServiceRecordsManagement } from '../services/ServiceRecordsManagement';
 import { hrmsService } from '../../services/hrmsService';
 import { readAssignments } from '../clients/ClientManagement';
 import {
@@ -49,7 +50,8 @@ import {
   Download,
   Trash2,
   Check,
-  FolderOpen
+  FolderOpen,
+  Award
 } from 'lucide-react';
 
 interface VaultDoc {
@@ -76,12 +78,13 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   navContext,
   onOpenPolicies
 }) => {
-  const { currentUser, canManageOrganization } = useAuth();
+  const { currentUser, canManageOrganization, canAccessModule } = useAuth();
   const isRegularEmployee = currentUser.role === 'employee';
   const isManager = currentUser.role === 'senior_manager' || currentUser.role === 'reporting_manager';
   const isHR = currentUser.role === 'hr_admin';
 
-  const [viewMode, setViewMode] = useState<'reportees' | 'directory' | 'hierarchy'>(() => {
+  const [viewMode, setViewMode] = useState<'reportees' | 'directory' | 'hierarchy' | 'service_records'>(() => {
+    if (navContext?.subTab === 'service_records' || navContext?.subTab === 'service-records') return 'service_records';
     if (navContext?.subTab === 'directory') return 'directory';
     if (navContext?.subTab === 'hierarchy') return 'hierarchy';
     return isRegularEmployee ? 'directory' : 'reportees';
@@ -104,6 +107,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       setViewMode('directory');
     } else if (navContext?.subTab === 'hierarchy') {
       setViewMode('hierarchy');
+    } else if (navContext?.subTab === 'service_records' || navContext?.subTab === 'service-records') {
+      setViewMode('service_records');
     }
     if (navContext?.statusFilter) {
       setSelectedStatusFilter(navContext.statusFilter);
@@ -812,20 +817,9 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         </div>
       )}
 
-      {/* Reordered Employee Setup Tabs (Req 4): 1. My Reportees -> 2. Employee Directory -> 3. Reporting Hierarchy -> 4. Promotions & Appraisals -> 5. Exit & Clearance */}
+      {/* Tabs: 1. Employee Directory | 2. My Reportees | 3. Reporting Hierarchy | 4. Service Records */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
         <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg">
-          <button
-            type="button"
-            onClick={() => setViewMode('reportees')}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              viewMode === 'reportees' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Users className="h-3.5 w-3.5 text-indigo-600" />
-            <span>My Reportees ({directReportees.length})</span>
-          </button>
-
           <button
             type="button"
             onClick={() => setViewMode('directory')}
@@ -835,6 +829,17 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           >
             <LayoutList className="h-3.5 w-3.5" />
             <span>Employee Directory ({filteredRows.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setViewMode('reportees')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+              viewMode === 'reportees' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className="h-3.5 w-3.5 text-indigo-600" />
+            <span>My Reportees ({directReportees.length})</span>
           </button>
 
           {!isRegularEmployee && (
@@ -847,6 +852,19 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             >
               <GitFork className="h-3.5 w-3.5" />
               <span>Reporting Hierarchy</span>
+            </button>
+          )}
+
+          {canAccessModule('service_records') && (
+            <button
+              type="button"
+              onClick={() => setViewMode('service_records')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                viewMode === 'service_records' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Award className="h-3.5 w-3.5 text-amber-600" />
+              <span>Service Records</span>
             </button>
           )}
         </div>
@@ -1100,6 +1118,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       {/* TAB 3: REPORTING HIERARCHY */}
       {viewMode === 'hierarchy' && (
         <OrgChart onSelectEmployee={(emp) => setSelectedEmployee(emp)} />
+      )}
+
+      {/* TAB 4: SERVICE RECORDS */}
+      {viewMode === 'service_records' && (
+        <ServiceRecordsManagement />
       )}
 
 

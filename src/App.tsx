@@ -113,8 +113,10 @@ function MainApp() {
         );
       case 'service_records':
         return (
-          <ServiceRecordsManagement
-            key={`sr-${navVersion}`}
+          <EmployeeDirectory
+            key={`emp-sr-${navVersion}`}
+            navContext={{ ...(navContext || {}), subTab: 'service_records' }}
+            onOpenPolicies={() => openPoliciesForCategory('Employee & Exit')}
           />
         );
       case 'clients':
