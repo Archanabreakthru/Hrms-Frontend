@@ -1,2504 +1,1705 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { db, subscribeToDB } from '../../db/storage';
-import {
-  AttendanceRecord,
-  AttendanceCorrectionRequest,
-  ShiftDefinition,
-  NavigationContext,
-  ClientVerificationStatus,
-  CompanyApprovalStatus,
-  PayrollEligibilityStatus,
-  DisputeResolutionDecision
-} from '../../types/hrms';
-import { useAuth } from '../../services/authContext';
-import { hrmsService } from '../../services/hrmsService';
-import { DataTable, Column } from '../common/DataTable';
-import { ExportButton } from '../common/ExportButton';
-import { CsvImportModal } from '../common/CsvImportModal';
-import { RequestCorrectionModal } from './RequestCorrectionModal';
+// Orbyx HRMS - Attendance & Shifts (Corrected Targeted Implementation)
+// 1. Top Attendance Action Bar with Live Punch Actions (State 1: Not Checked In, State 2: Checked In -> Record Check-Out, State 3: Checked Out with working hours)
+// 2. Clear Separation of 3 Distinct Actions:
+//    A. Normal Check-in / Check-out (Top action bar)
+//    B. Employee Forgot Check-in / Check-out Correction (EmployeeCorrectionModal)
+//    C. HR Outage / Manual Attendance Entry (HRManualEntryModal - 4 structured sections)
+// 3. HR Workforce Interface vs Employee Self-Service Interface
+// 4. In-Memory Session State only (No Database, No Backend, Clean Empty States)
+
+import React, { useState, useMemo } from 'react';
 import {
   Clock,
-  LogIn,
-  LogOut,
+  Calendar,
   CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Users,
+  BriefcaseBusiness,
+  ShieldCheck,
   Plus,
+  Search,
+  Filter,
   Check,
   X,
+  FileCheck2,
+  CalendarDays,
+  UserCheck,
+  ArrowRight,
+  TrendingUp,
   RotateCcw,
   Edit3,
-  Power,
-  Upload,
-  ShieldCheck,
-  AlertCircle,
-  Mail,
-  FileCheck2,
-  AlertTriangle,
+  LogIn,
+  LogOut,
   Building2,
-  Copy,
-  MessageSquareWarning,
-  Gavel
+  ShieldAlert
 } from 'lucide-react';
+import { useAuth } from '../../services/authContext';
+import {
+  ShiftDefinitionRecord,
+  ShiftScheduleEntry,
+  DailyAttendanceRecord,
+  AttendanceCorrectionEntry,
+  OvertimeEntry,
+  AttendancePunchStatus,
+  CorrectionRequestStatus,
+  OvertimeApprovalStatus
+} from './attendanceModuleTypes';
+import { EmployeeCorrectionModal } from './EmployeeCorrectionModal';
+import { HRManualEntryModal } from './HRManualEntryModal';
 
 interface AttendanceManagementProps {
-  navContext?: NavigationContext;
+  navContext?: any;
   onOpenPolicies?: () => void;
 }
 
-export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({
-  navContext,
-  onOpenPolicies
-}) => {
-  const { currentUser, canApproveRequestFor } = useAuth();
-  const [activeTab, setActiveTab] = useState<'records' | 'corrections' | 'shifts' | 'verifications'>('records');
-  const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
-  const [correctionModalType, setCorrectionModalType] = useState<'Manual Entry' | 'Correction'>('Correction');
-  const [isImportOpen, setIsImportOpen] = useState(false);
-  const [, setDbTick] = useState(0);
+export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOpenPolicies }) => {
+  const { currentUser } = useAuth();
 
-  useEffect(() => {
-    return subscribeToDB(() => setDbTick((t) => t + 1));
-  }, []);
+  // Role resolution
+  const isHR =
+    currentUser?.role === 'hr_admin' ||
+    currentUser?.role === 'senior_manager';
 
-  // Extended filters for Attendance Records (Section 11)
-  const [empFilter, setEmpFilter] = useState('ALL');
-  const [clientFilter, setClientFilter] = useState('ALL');
-  const [deploymentFilter, setDeploymentFilter] = useState('ALL');
-  const [shiftFilter, setShiftFilter] = useState('ALL');
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [clientVerFilter, setClientVerFilter] = useState<string>('ALL');
-  const [companyAppFilter, setCompanyAppFilter] = useState<string>('ALL');
-  const [payrollStatusFilter, setPayrollStatusFilter] = useState<string>('ALL');
-  const [exceptionFilter, setExceptionFilter] = useState<'ALL' | 'LATE' | 'OVERTIME'>('ALL');
-  const [selectedDate, setSelectedDate] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const isReportingManager = currentUser?.role === 'reporting_manager';
 
-  // Punch station state
-  const [punchMessage, setPunchMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [punchWorkMode, setPunchWorkMode] = useState<'Auto' | 'Client Site' | 'Office'>('Auto');
+  // Navigation tab state for HR (Workforce Dashboard, Timesheet Records, Shift Configuration, Shift Scheduling, Overtime Management, Attendance Corrections, HR Manual Entries)
+  const [activeHRTab, setActiveHRTab] = useState<
+    'dashboard' | 'timesheets' | 'shifts' | 'scheduling' | 'overtime' | 'corrections' | 'manual-entries'
+  >('dashboard');
 
-  useEffect(() => {
-    if (!navContext) return;
-    if (navContext.subTab === 'corrections') {
-      setActiveTab('corrections');
-    } else if (navContext.subTab === 'shifts') {
-      setActiveTab('shifts');
-    } else if (navContext.subTab === 'logs' || navContext.subTab === 'records') {
-      setActiveTab('records');
+  // Navigation tab state for Employee
+  const [activeEmpTab, setActiveEmpTab] = useState<'history' | 'corrections' | 'overtime'>('history');
+
+  // In-Memory Frontend Session State (No Database, No Persistence)
+  const [shifts, setShifts] = useState<ShiftDefinitionRecord[]>([
+    {
+      id: 'SHIFT-GEN',
+      name: 'General Day Shift',
+      code: 'GEN-01',
+      startTime: '09:30',
+      endTime: '18:30',
+      breakDurationMinutes: 60,
+      totalWorkingHours: 8,
+      gracePeriodMinutes: 15,
+      lateArrivalThresholdMinutes: 30,
+      earlyDepartureThresholdMinutes: 30,
+      weeklyOffDays: [0, 6],
+      workdaysCount: 5,
+      isOvernight: false,
+      isActive: true
+    },
+    {
+      id: 'SHIFT-MORNING',
+      name: 'Early Morning Shift',
+      code: 'MOR-01',
+      startTime: '08:00',
+      endTime: '17:00',
+      breakDurationMinutes: 60,
+      totalWorkingHours: 8,
+      gracePeriodMinutes: 15,
+      lateArrivalThresholdMinutes: 30,
+      earlyDepartureThresholdMinutes: 30,
+      weeklyOffDays: [0, 6],
+      workdaysCount: 5,
+      isOvernight: false,
+      isActive: true
+    },
+    {
+      id: 'SHIFT-EVENING',
+      name: 'Evening Shift',
+      code: 'EVE-01',
+      startTime: '13:00',
+      endTime: '22:00',
+      breakDurationMinutes: 60,
+      totalWorkingHours: 8,
+      gracePeriodMinutes: 15,
+      lateArrivalThresholdMinutes: 30,
+      earlyDepartureThresholdMinutes: 30,
+      weeklyOffDays: [0, 6],
+      workdaysCount: 5,
+      isOvernight: false,
+      isActive: true
+    },
+    {
+      id: 'SHIFT-NIGHT',
+      name: 'Night Shift',
+      code: 'NGT-01',
+      startTime: '21:00',
+      endTime: '06:00',
+      breakDurationMinutes: 60,
+      totalWorkingHours: 8,
+      gracePeriodMinutes: 15,
+      lateArrivalThresholdMinutes: 30,
+      earlyDepartureThresholdMinutes: 30,
+      weeklyOffDays: [0, 6],
+      workdaysCount: 5,
+      isOvernight: true,
+      isActive: true
     }
-    if (navContext.dateFilter !== undefined) {
-      setSelectedDate(navContext.dateFilter);
-    }
-    if (navContext.employeeId) {
-      setEmpFilter(navContext.employeeId);
-    }
-    if (navContext.statusFilter && navContext.subTab !== 'corrections') {
-      setStatusFilter(navContext.statusFilter);
-    }
-  }, [navContext]);
+  ]);
 
-  // Shift Add/Edit modal
-  const [editingShift, setEditingShift] = useState<ShiftDefinition | null>(null);
+  const [schedules, setSchedules] = useState<ShiftScheduleEntry[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<DailyAttendanceRecord[]>([]);
+  const [corrections, setCorrections] = useState<AttendanceCorrectionEntry[]>([]);
+  const [overtimeEntries, setOvertimeEntries] = useState<OvertimeEntry[]>([]);
+
+  // HR Manual Entries Log
+  const [hrManualAuditLogs, setHrManualAuditLogs] = useState<
+    Array<{
+      id: string;
+      recordId: string;
+      employeeName: string;
+      attendanceDate: string;
+      outageType: string;
+      incidentRef: string;
+      remarks: string;
+      enteredBy: string;
+      timestamp: string;
+    }>
+  >([]);
+
+  // Toast notifications
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'info'; text: string } | null>(null);
+  const showToast = (text: string, type: 'success' | 'info' = 'success') => {
+    setToastMessage({ type, text });
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // Date and Punch State
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const [punchWorkMode, setPunchWorkMode] = useState<'Office' | 'Client Site' | 'Remote'>('Office');
+
+  // Find Current User's Record for Today
+  const myTodayRecord = useMemo(() => {
+    return attendanceRecords.find(
+      (r) =>
+        r.date === todayStr &&
+        (r.employeeId === currentUser?.employeeId || r.employeeName === currentUser?.name)
+    );
+  }, [attendanceRecords, todayStr, currentUser]);
+
+  // Modals Visibility
+  const [isEmployeeCorrectionModalOpen, setIsEmployeeCorrectionModalOpen] = useState(false);
+  const [isHRManualModalOpen, setIsHRManualModalOpen] = useState(false);
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [isOvertimeModalOpen, setIsOvertimeModalOpen] = useState(false);
+
+  // Shift & Schedule Form State
   const [shiftForm, setShiftForm] = useState({
     name: '',
     code: '',
     startTime: '09:30',
     endTime: '18:30',
-    gracePeriodMinutes: 15,
-    totalWorkingHours: 8,
     breakDurationMinutes: 60,
+    totalWorkingHours: 8,
+    gracePeriodMinutes: 15,
+    lateArrivalThresholdMinutes: 30,
+    earlyDepartureThresholdMinutes: 30,
+    weeklyOffDays: [0, 6],
+    workdaysCount: 5,
+    isOvernight: false,
     isActive: true
   });
 
-  const [reviewCorr, setReviewCorr] = useState<{ id: string; decision: 'Approved' | 'Rejected' } | null>(null);
-  const [reviewComments, setReviewComments] = useState('');
-  const [reviewCorrError, setReviewCorrError] = useState('');
-
-  // Modal 1: Prepare External Client Verification Email (Section 6)
-  const [prepModalRec, setPrepModalRec] = useState<{
-    rec?: AttendanceRecord;
-    corr?: AttendanceCorrectionRequest;
-    coverageType: 'Single Date' | 'Multiple Dates' | 'Weekly Timesheet' | 'Date Range';
-    dateRangeEnd: string;
-    selectedExtraIds: string[];
-    draft?: {
-      referenceId: string;
-      supervisorName: string;
-      supervisorEmail: string;
-      subject: string;
-      body: string;
-      deliveryNote: string;
-    };
-    copied?: boolean;
-  } | null>(null);
-
-  // Modal 2: Record External Client Supervisor Email Response (Scenarios B & D)
-  const [recordEmailModal, setRecordEmailModal] = useState<{
-    rec?: AttendanceRecord;
-    corr?: AttendanceCorrectionRequest;
-    decision: 'Verified' | 'Disputed' | 'Correction Requested' | 'Absent';
-    coverageType: 'Single Date' | 'Multiple Dates' | 'Weekly Timesheet' | 'Date Range';
-    coveredStartDate: string;
-    coveredEndDate: string;
-    extraRecordIds: string[];
-    senderName: string;
-    senderEmail: string;
-    emailSubject: string;
-    emailReceivedAt: string;
-    messageReference: string;
-    supportingAttachmentRef: string;
-    summary: string;
-    disputeDetails: string;
-    claimedCheckIn: string;
-    claimedCheckOut: string;
-    claimedHours: string;
-    error?: string;
-  } | null>(null);
-
-  // Modal 3: Dispute Clarification & Resolution (Scenario D)
-  const [disputeModalRec, setDisputeModalRec] = useState<AttendanceRecord | null>(null);
-  const [clarificationText, setClarificationText] = useState('');
-  const [clarificationEvidence, setClarificationEvidence] = useState('');
-  const [resolutionDecision, setResolutionDecision] = useState<DisputeResolutionDecision>('Approve Original Attendance');
-  const [resolutionReason, setResolutionReason] = useState('');
-  const [resolvedCheckIn, setResolvedCheckIn] = useState('');
-  const [resolvedCheckOut, setResolvedCheckOut] = useState('');
-  const [disputeModalError, setDisputeModalError] = useState('');
-
-  // Modal 4: Stage 2 Company Final Approval (Section 8)
-  const [companyApprovalModal, setCompanyApprovalModal] = useState<{
-    rec: AttendanceRecord;
-    decision: 'Approved' | 'Rejected' | 'Returned for Correction';
-    comments: string;
-    error?: string;
-  } | null>(null);
-
-  const records = db.getAttendanceRecords();
-  const corrections = db.getCorrectionRequests();
-  const shifts = db.getShifts();
-  const employees = db.getEmployees();
-  const clientConfirmations = db.getClientEmailConfirmations();
-  const clients = hrmsService.getClientsFromStorage();
-  const deployments = hrmsService.getClientDeploymentsFromStorage();
-
-  const isHR = currentUser.role === 'hr_admin';
-  const isMD = currentUser.role === 'senior_manager';
-  const isManager = currentUser.role === 'reporting_manager';
-  const canRecordClientEmail = isHR || isMD || isManager;
-
-  // Scope: HR and MD see all; Reporting Manager sees team + own; Employee sees own
-  const scopedRecords = useMemo(() => {
-    return records.filter((r) => {
-      if (isHR || isMD) return true;
-      if (currentUser.role === 'reporting_manager') {
-        const emp = employees.find((e) => e.id === r.employeeId);
-        return emp?.reportingManagerId === currentUser.employeeId || r.employeeId === currentUser.employeeId;
-      }
-      return r.employeeId === currentUser.employeeId;
-    });
-  }, [records, isHR, isMD, currentUser, employees]);
-
-  const visibleRecords = useMemo(() => {
-    return scopedRecords.filter((r) => {
-      if (empFilter !== 'ALL' && r.employeeId !== empFilter) return false;
-      if (clientFilter !== 'ALL' && r.clientId !== clientFilter) return false;
-      if (deploymentFilter !== 'ALL' && r.assignmentId !== deploymentFilter) return false;
-      if (shiftFilter !== 'ALL' && r.shiftId !== shiftFilter) return false;
-      if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
-      const cVer = r.clientVerificationStatus || (r.workMode === 'Client Site' ? 'Pending' : 'Not Required');
-      if (clientVerFilter !== 'ALL' && cVer !== clientVerFilter) return false;
-      const cApp = r.companyApprovalStatus || (r.approvalStatus === 'Approved' ? 'Approved' : 'Pending');
-      if (companyAppFilter !== 'ALL' && cApp !== companyAppFilter) return false;
-      const pElig = r.payrollEligibilityStatus || (cApp === 'Approved' ? 'Eligible for Draft Payroll' : 'Not Eligible');
-      if (payrollStatusFilter !== 'ALL' && pElig !== payrollStatusFilter) return false;
-      if (exceptionFilter === 'LATE' && !r.isLate) return false;
-      if (exceptionFilter === 'OVERTIME' && !(r.overtimeHours > 0)) return false;
-      if (selectedDate && r.date !== selectedDate) return false;
-      if (dateFrom && r.date < dateFrom) return false;
-      if (dateTo && r.date > dateTo) return false;
-      return true;
-    });
-  }, [
-    scopedRecords,
-    empFilter,
-    clientFilter,
-    deploymentFilter,
-    shiftFilter,
-    statusFilter,
-    clientVerFilter,
-    companyAppFilter,
-    payrollStatusFilter,
-    exceptionFilter,
-    selectedDate,
-    dateFrom,
-    dateTo
-  ]);
-
-  // 7 Required Summary KPIs (Section 11)
-  const kpiStats = useMemo(() => {
-    const total = visibleRecords.length;
-    const pendingClientVer = visibleRecords.filter((r) => {
-      const st = r.clientVerificationStatus || (r.workMode === 'Client Site' ? 'Pending' : 'Not Required');
-      return st === 'Pending' || st === 'Verification Requested' || st === 'Correction Requested';
-    }).length;
-    const verifiedClient = visibleRecords.filter((r) => r.clientVerificationStatus === 'Verified').length;
-    const disputed = visibleRecords.filter(
-      (r) => r.clientVerificationStatus === 'Disputed' || r.approvalStatus === 'Disputed'
-    ).length;
-    const pendingCompany = visibleRecords.filter((r) => {
-      const app = r.companyApprovalStatus || (r.approvalStatus === 'Approved' ? 'Approved' : 'Pending');
-      return app === 'Pending' || app === 'Returned for Correction';
-    }).length;
-    const approvedCompany = visibleRecords.filter((r) => {
-      const app = r.companyApprovalStatus || (r.approvalStatus === 'Approved' ? 'Approved' : 'Pending');
-      return app === 'Approved';
-    }).length;
-    const payrollEligible = visibleRecords.filter((r) => {
-      const pel = r.payrollEligibilityStatus;
-      if (pel) return pel !== 'Not Eligible';
-      const app = r.companyApprovalStatus || (r.approvalStatus === 'Approved' ? 'Approved' : 'Pending');
-      return app === 'Approved' && r.clientVerificationStatus !== 'Disputed';
-    }).length;
-
-    return {
-      total,
-      pendingClientVer,
-      verifiedClient,
-      disputed,
-      pendingCompany,
-      approvedCompany,
-      payrollEligible
-    };
-  }, [visibleRecords]);
-
-  const pendingCorrections = corrections.filter((c) => {
-    if (c.status !== 'Pending') return false;
-    return canApproveRequestFor(c.employeeId);
+  const [scheduleForm, setScheduleForm] = useState({
+    employeeName: '',
+    employeeId: '',
+    shiftId: shifts[0]?.id || 'SHIFT-GEN',
+    startDate: todayStr,
+    endDate: todayStr
   });
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const myTodayRecord = records.find(
-    (r) => r.employeeId === currentUser.employeeId && r.date === todayStr
-  );
-  const myActiveDeployment = useMemo(
-    () => hrmsService.getActiveEmployeeDeploymentForDate(currentUser.employeeId, todayStr),
-    [currentUser.employeeId, todayStr, records.length]
-  );
+  const [overtimeForm, setOvertimeForm] = useState({
+    attendanceDate: todayStr,
+    standardHours: 8,
+    actualHours: 10,
+    overtimeHours: 2,
+    overtimeReason: ''
+  });
 
-  const handlePunch = (type: 'check-in' | 'check-out') => {
-    setPunchMessage(null);
-    const useClientDep =
-      punchWorkMode === 'Office'
-        ? undefined
-        : myActiveDeployment
-        ? {
-            assignmentId: myActiveDeployment.id,
-            clientId: myActiveDeployment.clientId,
-            projectName: myActiveDeployment.projectName,
-            workMode: 'Client Site' as const
-          }
-        : undefined;
+  // Filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
 
-    const res = hrmsService.punchAttendance(
-      currentUser.employeeId,
-      type,
-      currentUser.id,
-      currentUser.name,
-      useClientDep
-    );
-    if (!res.success) {
-      setPunchMessage({ type: 'error', text: res.message });
-    } else {
-      setPunchMessage({ type: 'success', text: res.message });
-    }
-  };
+  // -------------------------------------------------------------
+  // ACTION A: LIVE CHECK-IN / CHECK-OUT (TOP ACTION BAR)
+  // -------------------------------------------------------------
+  const handleCheckIn = () => {
+    if (myTodayRecord?.checkInTime) return; // Prevent duplicate check-in
 
-  const handleCorrectionDecision = () => {
-    if (!reviewCorr) return;
-    setReviewCorrError('');
-    const res = hrmsService.decideAttendanceCorrection(
-      reviewCorr.id,
-      reviewCorr.decision,
-      reviewComments,
-      currentUser.id,
-      currentUser.name
-    );
-    if (res && !res.success) {
-      setReviewCorrError(res.message);
-      return;
-    }
-    setReviewCorr(null);
-    setReviewComments('');
-  };
+    const now = new Date();
+    const timeStr = now.toTimeString().substring(0, 5);
+    const isLate = timeStr > '09:45';
 
-  const openPrepareEmailModal = (rec?: AttendanceRecord, corr?: AttendanceCorrectionRequest) => {
-    const targetIds = rec ? [rec.id] : [];
-    const draftRes = hrmsService.prepareClientVerificationRequest({
-      attendanceRecordIds: targetIds,
-      correctionRequestId: corr?.id,
-      coverageType: 'Single Date',
-      actorUserId: currentUser.id,
-      actorName: currentUser.name
-    });
-    setPrepModalRec({
-      rec,
-      corr,
-      coverageType: 'Single Date',
-      dateRangeEnd: rec?.date || corr?.date || todayStr,
-      selectedExtraIds: targetIds,
-      draft: draftRes.success
-        ? {
-            referenceId: draftRes.referenceId,
-            supervisorName: draftRes.supervisorName,
-            supervisorEmail: draftRes.supervisorEmail,
-            subject: draftRes.subject,
-            body: draftRes.body,
-            deliveryNote: draftRes.deliveryNote
-          }
-        : undefined
-    });
-  };
-
-  const regenerateDraftForCoverage = (
-    coverageType: 'Single Date' | 'Multiple Dates' | 'Weekly Timesheet' | 'Date Range',
-    rec?: AttendanceRecord,
-    corr?: AttendanceCorrectionRequest
-  ) => {
-    if (!rec && !corr) return;
-    const empId = rec?.employeeId || corr?.employeeId;
-    const matchingEmpRecords = records
-      .filter((r) => r.employeeId === empId && r.workMode === 'Client Site')
-      .map((r) => r.id);
-    const idsToInclude =
-      coverageType === 'Single Date'
-        ? rec
-          ? [rec.id]
-          : []
-        : matchingEmpRecords.length > 0
-        ? matchingEmpRecords
-        : rec
-        ? [rec.id]
-        : [];
-
-    const draftRes = hrmsService.prepareClientVerificationRequest({
-      attendanceRecordIds: idsToInclude,
-      correctionRequestId: corr?.id,
-      coverageType,
-      actorUserId: currentUser.id,
-      actorName: currentUser.name
-    });
-
-    setPrepModalRec((prev) =>
-      prev
-        ? {
-            ...prev,
-            coverageType,
-            selectedExtraIds: idsToInclude,
-            draft: draftRes.success
-              ? {
-                  referenceId: draftRes.referenceId,
-                  supervisorName: draftRes.supervisorName,
-                  supervisorEmail: draftRes.supervisorEmail,
-                  subject: draftRes.subject,
-                  body: draftRes.body,
-                  deliveryNote: draftRes.deliveryNote
-                }
-              : prev.draft
-          }
-        : null
-    );
-  };
-
-  const openRecordEmailResponseModal = (
-    rec?: AttendanceRecord,
-    corr?: AttendanceCorrectionRequest,
-    defaultDecision: 'Verified' | 'Disputed' | 'Correction Requested' | 'Absent' = 'Verified'
-  ) => {
-    const empId = rec?.employeeId || corr?.employeeId || '';
-    const dateVal = rec?.date || corr?.date || todayStr;
-    const dep =
-      deployments.find((d) => d.id === (rec?.assignmentId || corr?.assignmentId)) ||
-      hrmsService.getActiveEmployeeDeploymentForDate(empId, dateVal, true);
-
-    const supName = rec?.clientSupervisorName || corr?.clientSupervisorName || dep?.clientSupervisorName || 'Client Supervisor';
-    const supEmail =
-      rec?.clientSupervisorEmail ||
-      corr?.clientSupervisorEmail ||
-      dep?.clientSupervisorEmail ||
-      'supervisor@client-org.example.com';
-
-    setRecordEmailModal({
-      rec,
-      corr,
-      decision: defaultDecision,
-      coverageType: 'Single Date',
-      coveredStartDate: dateVal,
-      coveredEndDate: dateVal,
-      extraRecordIds: rec ? [rec.id] : [],
-      senderName: supName,
-      senderEmail: supEmail,
-      emailSubject: `RE: [Orbyx HRMS] Attendance Verification (${empId} - ${dateVal})`,
-      emailReceivedAt: new Date().toISOString().slice(0, 16),
-      messageReference: `MSG-EXT-${Date.now().toString().slice(-5)}`,
-      supportingAttachmentRef: '',
-      summary:
-        defaultDecision === 'Verified'
-          ? `Client supervisor ${supName} confirmed attendance hours via external email reply.`
-          : `Client supervisor ${supName} disputed the recorded working hours via external email reply.`,
-      disputeDetails: '',
-      claimedCheckIn: rec?.checkInTime || corr?.requestedCheckIn || '09:30',
-      claimedCheckOut: rec?.checkOutTime || corr?.requestedCheckOut || '16:30',
-      claimedHours: '6.0'
-    });
-  };
-
-  const handleSaveClientEmailResponse = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!recordEmailModal) return;
-
-    const { rec, corr } = recordEmailModal;
-    const empId = rec?.employeeId || corr?.employeeId || '';
-    let targetIds = [...recordEmailModal.extraRecordIds];
-
-    if (recordEmailModal.coverageType !== 'Single Date') {
-      const rangeMatches = records
-        .filter(
-          (r) =>
-            r.employeeId === empId &&
-            r.workMode === 'Client Site' &&
-            r.date >= recordEmailModal.coveredStartDate &&
-            r.date <= recordEmailModal.coveredEndDate
-        )
-        .map((r) => r.id);
-      targetIds = Array.from(new Set([...targetIds, ...rangeMatches]));
-    }
-
-    const coveredDates = Array.from(
-      new Set([
-        recordEmailModal.coveredStartDate,
-        recordEmailModal.coveredEndDate,
-        ...records.filter((r) => targetIds.includes(r.id)).map((r) => r.date)
-      ])
-    ).sort();
-
-    const res = hrmsService.recordClientSupervisorEmailResponse({
-      attendanceRecordIds: targetIds,
-      correctionRequestId: corr?.id,
-      coverageType: recordEmailModal.coverageType,
-      coveredDates,
-      decision: recordEmailModal.decision,
-      senderName: recordEmailModal.senderName,
-      senderEmail: recordEmailModal.senderEmail,
-      emailSubject: recordEmailModal.emailSubject,
-      emailReceivedAt: recordEmailModal.emailReceivedAt,
-      messageReference: recordEmailModal.messageReference,
-      supportingAttachmentRef: recordEmailModal.supportingAttachmentRef || undefined,
-      summary: recordEmailModal.summary,
-      disputeDetails: recordEmailModal.disputeDetails || undefined,
-      claimedCheckIn: recordEmailModal.claimedCheckIn || undefined,
-      claimedCheckOut: recordEmailModal.claimedCheckOut || undefined,
-      claimedHours: recordEmailModal.claimedHours ? Number(recordEmailModal.claimedHours) : undefined,
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role
-    });
-
-    if (!res.success) {
-      setRecordEmailModal({ ...recordEmailModal, error: res.message });
-      return;
-    }
-    setRecordEmailModal(null);
-  };
-
-  const openDisputeModal = (rec: AttendanceRecord) => {
-    setDisputeModalRec(rec);
-    setClarificationText(rec.employeeClarification || '');
-    setClarificationEvidence(rec.employeeClarificationEvidence || '');
-    setResolutionDecision(rec.disputeResolutionDecision || 'Approve Original Attendance');
-    setResolutionReason(rec.disputeResolutionReason || '');
-    setResolvedCheckIn(rec.clientClaimedCheckIn || rec.checkInTime || '09:30');
-    setResolvedCheckOut(rec.clientClaimedCheckOut || rec.checkOutTime || '17:30');
-    setDisputeModalError('');
-  };
-
-  const handleSubmitClarification = () => {
-    if (!disputeModalRec) return;
-    setDisputeModalError('');
-    const res = hrmsService.submitDisputeClarification({
-      attendanceRecordId: disputeModalRec.id,
-      clarification: clarificationText,
-      evidence: clarificationEvidence || undefined,
-      actorUserId: currentUser.id,
-      actorName: currentUser.name
-    });
-    if (!res.success) {
-      setDisputeModalError(res.message);
-      return;
-    }
-    const updated = db.getAttendanceRecords().find((r) => r.id === disputeModalRec.id) || null;
-    setDisputeModalRec(updated);
-  };
-
-  const handleResolveDispute = () => {
-    if (!disputeModalRec) return;
-    setDisputeModalError('');
-    const res = hrmsService.resolveAttendanceDispute({
-      attendanceRecordId: disputeModalRec.id,
-      decision: resolutionDecision,
-      reason: resolutionReason,
-      correctedCheckIn: resolutionDecision === 'Approve Corrected Attendance' ? resolvedCheckIn : undefined,
-      correctedCheckOut: resolutionDecision === 'Approve Corrected Attendance' ? resolvedCheckOut : undefined,
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role
-    });
-    if (!res.success) {
-      setDisputeModalError(res.message);
-      return;
-    }
-    setDisputeModalRec(null);
-  };
-
-  const handleCompanyApprovalSubmit = () => {
-    if (!companyApprovalModal) return;
-    const res = hrmsService.decideCompanyAttendanceApproval({
-      attendanceRecordId: companyApprovalModal.rec.id,
-      decision: companyApprovalModal.decision,
-      comments: companyApprovalModal.comments,
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role
-    });
-    if (!res.success) {
-      setCompanyApprovalModal({ ...companyApprovalModal, error: res.message });
-      return;
-    }
-    setCompanyApprovalModal(null);
-  };
-
-  const openAddShift = () => {
-    setEditingShift(null);
-    setShiftForm({
-      name: '',
-      code: '',
-      startTime: '09:30',
-      endTime: '18:30',
-      gracePeriodMinutes: 15,
-      totalWorkingHours: 8,
+    const newRecord: DailyAttendanceRecord = {
+      id: `ATT-${Date.now().toString().slice(-4)}`,
+      employeeId: currentUser?.employeeId || 'EMP-ME',
+      employeeName: currentUser?.name || 'Current User',
+      date: todayStr,
+      shiftId: 'SHIFT-GEN',
+      shiftName: 'General Day Shift (09:30 - 18:30)',
+      checkInTime: timeStr,
+      totalHours: 0,
+      netWorkingHours: 0,
       breakDurationMinutes: 60,
-      isActive: true
-    });
-    setIsShiftModalOpen(true);
+      overtimeHours: 0,
+      isLate,
+      lateMinutes: isLate ? 15 : 0,
+      isEarlyDeparture: false,
+      isMissingPunch: true,
+      status: isLate ? 'Late' : 'Present',
+      workLocationType: punchWorkMode,
+      source: 'Web Punch'
+    };
+
+    setAttendanceRecords((prev) => [
+      newRecord,
+      ...prev.filter(
+        (r) =>
+          !(
+            r.date === todayStr &&
+            (r.employeeId === (currentUser?.employeeId || 'EMP-ME') ||
+              r.employeeName === currentUser?.name)
+          )
+      )
+    ]);
+
+    showToast(`Check-In recorded at ${timeStr}. State transitioned to Checked In.`);
   };
 
-  const openEditShift = (s: ShiftDefinition) => {
-    setEditingShift(s);
-    setShiftForm({
-      name: s.name,
-      code: s.code,
-      startTime: s.startTime,
-      endTime: s.endTime,
-      gracePeriodMinutes: s.gracePeriodMinutes,
-      totalWorkingHours: s.totalWorkingHours,
-      breakDurationMinutes: s.breakDurationMinutes,
-      isActive: s.isActive !== false
-    });
-    setIsShiftModalOpen(true);
+  const handleCheckOut = () => {
+    if (!myTodayRecord?.checkInTime || myTodayRecord.checkOutTime) return; // Prevent invalid/duplicate checkout
+
+    const now = new Date();
+    const timeStr = now.toTimeString().substring(0, 5);
+    const inTime = myTodayRecord.checkInTime;
+
+    const [inH, inM] = inTime.split(':').map(Number);
+    const [outH, outM] = timeStr.split(':').map(Number);
+    let totalMinutes = outH * 60 + outM - (inH * 60 + inM);
+    if (totalMinutes < 0) totalMinutes += 24 * 60;
+    const netMins = Math.max(0, totalMinutes - 60);
+    const netHours = +(netMins / 60).toFixed(2);
+    const totalHours = +(totalMinutes / 60).toFixed(2);
+
+    const isEarly = timeStr < '18:00';
+    const overtime = netHours > 8 ? +(netHours - 8).toFixed(2) : 0;
+    const finalStatus: AttendancePunchStatus =
+      netHours >= 8 ? (myTodayRecord.isLate ? 'Late' : 'Present') : 'Half Day';
+
+    setAttendanceRecords((prev) =>
+      prev.map((r) => {
+        if (
+          r.date === todayStr &&
+          (r.employeeId === (currentUser?.employeeId || 'EMP-ME') ||
+            r.employeeName === currentUser?.name)
+        ) {
+          return {
+            ...r,
+            checkOutTime: timeStr,
+            totalHours,
+            netWorkingHours: netHours,
+            isMissingPunch: false,
+            isEarlyDeparture: isEarly,
+            overtimeHours: overtime,
+            status: finalStatus
+          };
+        }
+        return r;
+      })
+    );
+
+    showToast(`Check-Out recorded at ${timeStr}. Total Net Working Hours: ${netHours} hrs.`);
   };
 
+  // -------------------------------------------------------------
+  // ACTION B: EMPLOYEE FORGOT CHECK-IN/OUT (CORRECTION WORKFLOW)
+  // -------------------------------------------------------------
+  const handleSaveCorrection = (newCorr: AttendanceCorrectionEntry) => {
+    setCorrections((prev) => [newCorr, ...prev]);
+    showToast('Correction submitted. Routed to Reporting Manager for review.');
+  };
+
+  const handleManagerCorrectionDecision = (
+    corr: AttendanceCorrectionEntry,
+    decision: 'Approved' | 'Rejected'
+  ) => {
+    setCorrections((prev) =>
+      prev.map((c) => {
+        if (c.id !== corr.id) return c;
+        return {
+          ...c,
+          status: decision === 'Approved' ? 'Pending HR Approval' : 'Manager Rejected',
+          managerDecision: decision,
+          managerDecidedAt: new Date().toISOString(),
+          managerComments: `Reviewed by ${currentUser?.name || 'Reporting Manager'}`
+        };
+      })
+    );
+    showToast(
+      `Correction request ${
+        decision === 'Approved' ? 'approved and forwarded to HR Manager' : 'rejected'
+      }.`
+    );
+  };
+
+  const handleHRCorrectionDecision = (
+    corr: AttendanceCorrectionEntry,
+    decision: 'Approved' | 'Rejected'
+  ) => {
+    setCorrections((prev) =>
+      prev.map((c) => {
+        if (c.id !== corr.id) return c;
+        return {
+          ...c,
+          status: decision === 'Approved' ? 'HR Approved' : 'HR Rejected',
+          hrDecision: decision,
+          hrDecidedAt: new Date().toISOString(),
+          hrComments: `Final approval by ${currentUser?.name || 'HR Manager'}`
+        };
+      })
+    );
+
+    // Update attendance record ONLY after final HR approval
+    if (decision === 'Approved') {
+      const updatedRecord: DailyAttendanceRecord = {
+        id: `ATT-CORR-${Date.now().toString().slice(-4)}`,
+        employeeId: corr.employeeId,
+        employeeName: corr.employeeName,
+        date: corr.attendanceDate,
+        shiftId: 'SHIFT-GEN',
+        shiftName: 'General Day Shift (09:30 - 18:30)',
+        checkInTime: corr.requestedCheckIn,
+        checkOutTime: corr.requestedCheckOut,
+        totalHours: corr.calculatedHours,
+        netWorkingHours: corr.calculatedHours,
+        breakDurationMinutes: 60,
+        overtimeHours: corr.calculatedHours > 8 ? +(corr.calculatedHours - 8).toFixed(2) : 0,
+        isLate: false,
+        lateMinutes: 0,
+        isEarlyDeparture: false,
+        isMissingPunch: false,
+        status: corr.requestedOutcome,
+        workLocationType: 'Office',
+        source: 'Correction Regularization'
+      };
+
+      setAttendanceRecords((prev) => [
+        updatedRecord,
+        ...prev.filter(
+          (r) => !(r.date === corr.attendanceDate && r.employeeId === corr.employeeId)
+        )
+      ]);
+    }
+
+    showToast(
+      `HR Final Action: Request ${
+        decision === 'Approved' ? 'approved and attendance updated' : 'rejected'
+      }.`
+    );
+  };
+
+  // -------------------------------------------------------------
+  // ACTION C: HR OUTAGE / MANUAL ATTENDANCE ENTRY
+  // -------------------------------------------------------------
+  const handleSaveHRManualEntry = (
+    record: DailyAttendanceRecord,
+    details: {
+      outageType: string;
+      incidentRef: string;
+      supportingEvidenceRef: string;
+      remarks: string;
+    }
+  ) => {
+    setAttendanceRecords((prev) => [
+      record,
+      ...prev.filter(
+        (r) => !(r.date === record.date && r.employeeId === record.employeeId)
+      )
+    ]);
+
+    setHrManualAuditLogs((prev) => [
+      {
+        id: `LOG-MAN-${Date.now().toString().slice(-4)}`,
+        recordId: record.id,
+        employeeName: record.employeeName,
+        attendanceDate: record.date,
+        outageType: details.outageType,
+        incidentRef: details.incidentRef,
+        remarks: details.remarks,
+        enteredBy: currentUser?.name || 'HR Admin',
+        timestamp: new Date().toISOString()
+      },
+      ...prev
+    ]);
+
+    showToast(
+      `HR Manual Entry recorded for ${record.employeeName} (${record.date}). Net Hours: ${record.netWorkingHours}h.`
+    );
+  };
+
+  // -------------------------------------------------------------
+  // OVERTIME SUBMISSION & WORKFLOW
+  // -------------------------------------------------------------
+  const handleSubmitOvertime = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newOT: OvertimeEntry = {
+      id: `OT-${Date.now().toString().slice(-4)}`,
+      employeeId: currentUser?.employeeId || 'EMP-ME',
+      employeeName: currentUser?.name || 'Current User',
+      attendanceDate: overtimeForm.attendanceDate,
+      shiftName: 'General Day Shift (09:30 - 18:30)',
+      standardHours: overtimeForm.standardHours,
+      actualHours: overtimeForm.actualHours,
+      overtimeHours: overtimeForm.overtimeHours,
+      overtimeReason: overtimeForm.overtimeReason,
+      status: 'Pending Manager Approval',
+      submittedAt: new Date().toISOString()
+    };
+
+    setOvertimeEntries((prev) => [newOT, ...prev]);
+    showToast('Overtime submitted for Reporting Manager review.');
+    setIsOvertimeModalOpen(false);
+  };
+
+  const handleManagerOTDecision = (ot: OvertimeEntry, decision: 'Approved' | 'Rejected') => {
+    setOvertimeEntries((prev) =>
+      prev.map((o) => {
+        if (o.id !== ot.id) return o;
+        return {
+          ...o,
+          status: decision === 'Approved' ? 'Manager Approved' : 'Manager Rejected',
+          managerDecidedAt: new Date().toISOString(),
+          managerComments: `Reviewed by ${currentUser?.name || 'Manager'}`
+        };
+      })
+    );
+    showToast(`Overtime ${decision === 'Approved' ? 'approved by Manager, pending HR' : 'rejected'}.`);
+  };
+
+  const handleHROTDecision = (ot: OvertimeEntry, decision: 'Approved' | 'Rejected') => {
+    setOvertimeEntries((prev) =>
+      prev.map((o) => {
+        if (o.id !== ot.id) return o;
+        return {
+          ...o,
+          status: decision === 'Approved' ? 'Ready for Future Payroll Integration' : 'Rejected',
+          hrVerifiedAt: new Date().toISOString(),
+          hrComments: `Verified by ${currentUser?.name || 'HR'}`
+        };
+      })
+    );
+    showToast(`HR Overtime Verification: Record ${decision === 'Approved' ? 'Verified' : 'Rejected'}.`);
+  };
+
+  // -------------------------------------------------------------
+  // SHIFT MANAGEMENT
+  // -------------------------------------------------------------
   const handleSaveShift = (e: React.FormEvent) => {
     e.preventDefault();
-    const payload: ShiftDefinition = {
-      id: editingShift?.id || `SHF-${Date.now().toString().slice(-4)}`,
-      name: shiftForm.name.trim(),
-      code: shiftForm.code.trim().toUpperCase(),
-      startTime: shiftForm.startTime,
-      endTime: shiftForm.endTime,
-      gracePeriodMinutes: Number(shiftForm.gracePeriodMinutes),
-      totalWorkingHours: Number(shiftForm.totalWorkingHours),
-      breakDurationMinutes: Number(shiftForm.breakDurationMinutes),
-      weeklyOffDays: editingShift?.weeklyOffDays || [0, 6],
-      isOvernight: editingShift?.isOvernight ?? false,
-      isActive: shiftForm.isActive
+    if (!shiftForm.name.trim() || !shiftForm.code.trim()) return;
+
+    const newShift: ShiftDefinitionRecord = {
+      id: `SHIFT-${Date.now().toString().slice(-4)}`,
+      ...shiftForm
     };
-    db.saveShift(payload);
+    setShifts((prev) => [...prev, newShift]);
+    showToast(`Shift "${shiftForm.name}" configured.`);
     setIsShiftModalOpen(false);
   };
 
-  const toggleShiftActive = (s: ShiftDefinition) => {
-    db.saveShift({ ...s, isActive: s.isActive === false ? true : false });
+  const handleSaveSchedule = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scheduleForm.employeeName.trim()) return;
+
+    const matchedShift = shifts.find((s) => s.id === scheduleForm.shiftId);
+    const newEntry: ShiftScheduleEntry = {
+      id: `SCH-${Date.now().toString().slice(-4)}`,
+      employeeId: scheduleForm.employeeId || `EMP-${Date.now().toString().slice(-3)}`,
+      employeeName: scheduleForm.employeeName,
+      shiftId: scheduleForm.shiftId,
+      shiftName: matchedShift?.name || 'Standard Shift',
+      startDate: scheduleForm.startDate,
+      endDate: scheduleForm.endDate,
+      assignedBy: currentUser?.name || 'HR Admin',
+      assignedAt: new Date().toISOString()
+    };
+
+    setSchedules((prev) => [newEntry, ...prev]);
+    showToast(`Shift roster scheduled for "${scheduleForm.employeeName}".`);
+    setIsScheduleModalOpen(false);
   };
 
-  const recordColumns: Column<AttendanceRecord>[] = [
-    {
-      header: 'Employee & Deployment',
-      accessorKey: 'employeeId',
-      sortable: true,
-      cell: (rec) => {
-        const emp = employees.find((e) => e.id === rec.employeeId);
-        const cli = clients.find((c) => c.id === rec.clientId);
-        return (
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <img
-                src={emp?.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
-                alt=""
-                className="h-7 w-7 rounded-full object-cover"
-              />
-              <div>
-                <p className="font-semibold text-slate-900">{emp ? `${emp.firstName} ${emp.lastName}` : rec.employeeId}</p>
-                <p className="text-[10px] text-slate-400 font-mono">{rec.employeeId}</p>
-              </div>
-            </div>
-            {rec.workMode === 'Client Site' && (
-              <div className="pl-9 text-[10px] text-indigo-700">
-                <span className="font-semibold block">{cli?.name || rec.clientId || 'Client Site'}</span>
-                {rec.projectName && <span className="text-slate-500 block">{rec.projectName}</span>}
-              </div>
-            )}
-          </div>
-        );
-      }
-    },
-    {
-      header: 'Date & Shift',
-      accessorKey: 'date',
-      sortable: true,
-      cell: (rec) => {
-        const sh = shifts.find((s) => s.id === rec.shiftId);
-        return (
-          <div>
-            <span className="font-mono text-slate-800 font-medium block">{rec.date}</span>
-            <span className="text-[10px] text-slate-400">{sh?.code || rec.shiftId}</span>
-            {rec.entryDate && rec.entryDate !== rec.date && (
-              <span className="text-[10px] text-purple-700 font-mono block" title="Historical entry date">
-                Entered: {rec.entryDate}
-              </span>
-            )}
-            {rec.outageIncidentRef && (
-              <span className="text-[10px] text-amber-700 font-mono block">
-                Ref: {rec.outageIncidentRef}
-              </span>
-            )}
-          </div>
-        );
-      }
-    },
-    {
-      header: 'Punches & Hours',
-      accessorKey: 'totalHoursWorked',
-      sortable: true,
-      cell: (rec) => (
-        <div className="space-y-0.5">
-          <div className="font-mono font-bold text-slate-900">
-            {rec.checkInTime || '--:--'} &rarr; {rec.checkOutTime || 'Active'}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="font-mono text-xs font-semibold text-slate-700">{rec.totalHoursWorked} hrs</span>
-            {rec.overtimeHours > 0 && (
-              <span className="text-[10px] text-indigo-600 font-semibold">+{rec.overtimeHours}h OT</span>
-            )}
-            {rec.isLate && (
-              <span className="text-[10px] text-rose-600 font-medium">+{rec.lateMinutes}m Late</span>
-            )}
-          </div>
-          {(rec.originalCheckIn || rec.originalCheckOut) &&
-            (rec.originalCheckIn !== rec.checkInTime || rec.originalCheckOut !== rec.checkOutTime) && (
-              <span className="text-[10px] text-slate-400 font-mono block" title="Preserved original timestamps">
-                Orig: {rec.originalCheckIn || '--:--'}-{rec.originalCheckOut || '--:--'}{' '}
-                {rec.originalHours !== undefined ? `(${rec.originalHours}h)` : ''}
-              </span>
-            )}
-          {rec.clientClaimedHours !== undefined && rec.clientVerificationStatus === 'Disputed' && (
-            <span className="text-[10px] text-rose-700 font-mono font-semibold block">
-              Client Claim: {rec.clientClaimedCheckIn || '--:--'}-{rec.clientClaimedCheckOut || '--:--'} ({rec.clientClaimedHours}h)
-            </span>
-          )}
-        </div>
-      )
-    },
-    {
-      header: '1. Attendance Outcome',
-      accessorKey: 'status',
-      sortable: true,
-      cell: (rec) => (
-        <div className="space-y-1">
-          <span
-            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-              rec.status === 'Present'
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : rec.status === 'Late'
-                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                : rec.status === 'Half Day'
-                ? 'bg-orange-50 text-orange-700 border border-orange-200'
-                : rec.status === 'On Leave'
-                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                : 'bg-slate-100 text-slate-600'
-            }`}
-          >
-            {rec.status}
-          </span>
-          <span className="block text-[10px] text-slate-400">{rec.source}</span>
-        </div>
-      )
-    },
-    {
-      header: '2. Client Email Verification',
-      cell: (rec) => {
-        const cVer: ClientVerificationStatus =
-          rec.clientVerificationStatus || (rec.workMode === 'Client Site' ? 'Pending' : 'Not Required');
-        return (
-          <div className="space-y-1">
-            <span
-              className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${
-                cVer === 'Verified'
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : cVer === 'Disputed'
-                  ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                  : cVer === 'Verification Requested'
-                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                  : cVer === 'Pending' || cVer === 'Correction Requested'
-                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                  : 'bg-slate-100 text-slate-500'
-              }`}
-            >
-              {cVer}
-            </span>
-            {rec.clientSupervisorName && (
-              <p className="text-[10px] text-slate-500">
-                Sup: <span className="font-medium text-slate-700">{rec.clientSupervisorName}</span>
-                {rec.clientSupervisorEmail && (
-                  <span className="block font-mono text-[9px] text-slate-400">{rec.clientSupervisorEmail}</span>
-                )}
-              </p>
-            )}
-            {rec.verificationRefId && (
-              <span className="text-[9px] font-mono text-indigo-600 block">Ref: {rec.verificationRefId}</span>
-            )}
-          </div>
-        );
-      }
-    },
-    {
-      header: '3. Company Approval & 4. Payroll',
-      cell: (rec) => {
-        const cApp: CompanyApprovalStatus =
-          rec.companyApprovalStatus || (rec.approvalStatus === 'Approved' ? 'Approved' : 'Pending');
-        const pElig: PayrollEligibilityStatus =
-          rec.payrollEligibilityStatus || (cApp === 'Approved' ? 'Eligible for Draft Payroll' : 'Not Eligible');
-        return (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-400">Company:</span>
-              <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                  cApp === 'Approved'
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : cApp === 'Rejected'
-                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-200'
-                }`}
-              >
-                {cApp}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-400">Payroll:</span>
-              <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                  pElig === 'Finalized'
-                    ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                    : pElig === 'Included in Draft Payroll' || pElig === 'Eligible for Draft Payroll'
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : 'bg-slate-100 text-slate-600'
-                }`}
-              >
-                {pElig}
-              </span>
-            </div>
-            {rec.approvedBy && (
-              <span className="text-[9px] text-slate-400 block">By: {rec.approvedBy}</span>
-            )}
-          </div>
-        );
-      }
-    },
-    {
-      header: 'Workflow Actions',
-      cell: (rec) => {
-        const cVer: ClientVerificationStatus =
-          rec.clientVerificationStatus || (rec.workMode === 'Client Site' ? 'Pending' : 'Not Required');
-        const cApp: CompanyApprovalStatus =
-          rec.companyApprovalStatus || (rec.approvalStatus === 'Approved' ? 'Approved' : 'Pending');
-        const canCompanyApprove =
-          (isHR || isMD || canApproveRequestFor(rec.employeeId)) && rec.employeeId !== currentUser.employeeId;
+  // -------------------------------------------------------------
+  // METRICS FOR HR DASHBOARD
+  // -------------------------------------------------------------
+  const hrMetrics = useMemo(() => {
+    const total = attendanceRecords.length;
+    const present = attendanceRecords.filter((r) => r.status === 'Present').length;
+    const late = attendanceRecords.filter((r) => r.isLate).length;
+    const missing = attendanceRecords.filter((r) => r.isMissingPunch).length;
+    const pendingManagerCorr = corrections.filter(
+      (c) => c.status === 'Pending Manager Approval'
+    ).length;
+    const pendingHRCorr = corrections.filter((c) => c.status === 'Pending HR Approval').length;
+    const pendingOT = overtimeEntries.filter(
+      (o) => o.status === 'Pending Manager Approval' || o.status === 'Manager Approved'
+    ).length;
 
-        return (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {rec.workMode === 'Client Site' && cVer !== 'Verified' && (
-              <button
-                onClick={() => openPrepareEmailModal(rec)}
-                className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded text-[10px] font-semibold"
-                title="Prepare External Verification Email for Client Supervisor"
-              >
-                <Mail className="h-3 w-3" />
-                <span> Email Req</span>
-              </button>
-            )}
-
-            {rec.workMode === 'Client Site' && canRecordClientEmail && (
-              <button
-                onClick={() => openRecordEmailResponseModal(rec, undefined, 'Verified')}
-                className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[10px] font-semibold"
-                title="Record Client Supervisor Email Reply (Verified / Disputed)"
-              >
-                <FileCheck2 className="h-3 w-3" />
-                <span>Log Email Reply</span>
-              </button>
-            )}
-
-            {(cVer === 'Disputed' || rec.disputeDetails || rec.disputeResolutionDecision) && (
-              <button
-                onClick={() => openDisputeModal(rec)}
-                className="inline-flex items-center gap-1 px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-semibold"
-              >
-                <Gavel className="h-3 w-3" />
-                <span>{cVer === 'Disputed' ? 'Dispute Review' : 'Dispute Log'}</span>
-              </button>
-            )}
-
-            {canCompanyApprove && cApp !== 'Approved' && cVer !== 'Disputed' && (
-              <button
-                onClick={() =>
-                  setCompanyApprovalModal({
-                    rec,
-                    decision: 'Approved',
-                    comments: 'Verified against deployment shift & client email confirmation.'
-                  })
-                }
-                disabled={rec.workMode === 'Client Site' && cVer !== 'Verified'}
-                className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold ${
-                  rec.workMode === 'Client Site' && cVer !== 'Verified'
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                }`}
-                title={
-                  rec.workMode === 'Client Site' && cVer !== 'Verified'
-                    ? 'Awaiting Stage 1 Client Supervisor Email Verification before Stage 2 Company Approval'
-                    : 'Stage 2 Company Final Approval'
-                }
-              >
-                <Check className="h-3 w-3" />
-                <span>Company Approve</span>
-              </button>
-            )}
-          </div>
-        );
-      }
-    }
-  ];
-
-  const corrColumns: Column<AttendanceCorrectionRequest>[] = [
-    {
-      header: 'Employee & Exception Type',
-      accessorKey: 'employeeId',
-      sortable: true,
-      cell: (req) => {
-        const emp = employees.find((e) => e.id === req.employeeId);
-        const type = req.entryType || 'Correction';
-        return (
-          <div>
-            <span className="font-semibold text-slate-900 block">
-              {emp ? `${emp.firstName} ${emp.lastName}` : req.employeeId}
-            </span>
-            <div className="flex flex-wrap items-center gap-1 mt-0.5">
-              <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                  type === 'Manual Entry'
-                    ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                    : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                }`}
-              >
-                {type}
-              </span>
-              {req.exceptionType && (
-                <span className="text-[10px] text-slate-500">{req.exceptionType}</span>
-              )}
-              {req.outageIncidentRef && (
-                <span className="text-[10px] font-mono text-amber-700 bg-amber-50 px-1 rounded">
-                  {req.outageIncidentRef}
-                </span>
-              )}
-            </div>
-          </div>
-        );
-      }
-    },
-    {
-      header: 'Attendance vs Entry Date',
-      accessorKey: 'date',
-      sortable: true,
-      cell: (req) => (
-        <div>
-          <span className="font-mono font-semibold text-slate-900 block">Att: {req.date}</span>
-          <span className="text-[10px] text-slate-400 block">
-            Entry: {req.entryDate || (req.submittedAt ? req.submittedAt.slice(0, 10) : '-')}
-          </span>
-        </div>
-      )
-    },
-    {
-      header: 'Requested vs Original',
-      cell: (req) => (
-        <div>
-          <span className="font-mono font-bold text-slate-900 block">
-            {req.requestedCheckIn} - {req.requestedCheckOut}
-            {req.calculatedHours !== undefined ? ` (${req.calculatedHours}h)` : ''}
-          </span>
-          {(req.originalCheckIn || req.originalCheckOut) && (
-            <span className="text-[10px] text-slate-500 font-mono block">
-              Original: {req.originalCheckIn || '--:--'} - {req.originalCheckOut || '--:--'}
-              {req.originalHours !== undefined ? ` (${req.originalHours}h)` : ''}
-            </span>
-          )}
-          {req.conflictWarning && (
-            <span className="text-[10px] text-amber-700 font-medium block mt-0.5">
-              {req.conflictWarning}
-            </span>
-          )}
-        </div>
-      )
-    },
-    {
-      header: 'Reason & Client Verification',
-      accessorKey: 'reason',
-      cell: (req) => (
-        <div className="space-y-1">
-          <span className="text-slate-700 block">{req.reason}</span>
-          {req.supportingEvidence && (
-            <span className="text-[10px] text-indigo-700 font-mono block">
-              Ref: {req.supportingEvidence}
-            </span>
-          )}
-          {req.requiresClientEmailVerification && (
-            <div className="flex items-center gap-1.5">
-              <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                  req.clientVerificationStatus === 'Verified'
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : req.clientVerificationStatus === 'Disputed'
-                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                    : 'bg-amber-50 text-amber-800 border border-amber-200'
-                }`}
-              >
-                Client Email: {req.clientVerificationStatus || 'Pending'}
-              </span>
-              {req.clientSupervisorName && (
-                <span className="text-[10px] text-slate-500">({req.clientSupervisorName})</span>
-              )}
-            </div>
-          )}
-        </div>
-      )
-    },
-    {
-      header: 'Company Status',
-      accessorKey: 'status',
-      sortable: true,
-      cell: (req) => (
-        <div>
-          <span
-            className={`px-2 py-0.5 rounded text-xs font-medium ${
-              req.status === 'Approved'
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : req.status === 'Rejected'
-                ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                : 'bg-amber-50 text-amber-700 border border-amber-200'
-            }`}
-          >
-            {req.status}
-          </span>
-          {req.approverComments && (
-            <span className="text-[10px] text-slate-400 block mt-0.5">{req.approverComments}</span>
-          )}
-        </div>
-      )
-    },
-    {
-      header: 'Actions',
-      cell: (req) => {
-        if (req.status !== 'Pending') return null;
-        return (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {req.requiresClientEmailVerification && req.clientVerificationStatus !== 'Verified' && (
-              <>
-                <button
-                  onClick={() => openPrepareEmailModal(undefined, req)}
-                  className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded text-[10px] font-semibold"
-                >
-                  Email Draft
-                </button>
-                {canRecordClientEmail && (
-                  <button
-                    onClick={() => openRecordEmailResponseModal(undefined, req, 'Verified')}
-                    className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[10px] font-semibold"
-                  >
-                    Log Client Email
-                  </button>
-                )}
-              </>
-            )}
-            {req.employeeId === currentUser.employeeId ? (
-              <span className="text-[10px] text-slate-400 italic">Awaiting Manager/HR (No Self-Approval)</span>
-            ) : (
-              canApproveRequestFor(req.employeeId) && (
-                <>
-                  <button
-                    onClick={() => {
-                      setReviewCorrError('');
-                      setReviewCorr({ id: req.id, decision: 'Approved' });
-                    }}
-                    className="p-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors"
-                    title="Approve Correction"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setReviewCorrError('');
-                      setReviewCorr({ id: req.id, decision: 'Rejected' });
-                    }}
-                    className="p-1.5 bg-rose-600 text-white rounded hover:bg-rose-700 transition-colors"
-                    title="Reject Correction"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </>
-              )
-            )}
-          </div>
-        );
-      }
-    }
-  ];
-
-  const exportData = visibleRecords.map((r) => ({
-    EmployeeID: r.employeeId,
-    Date: r.date,
-    EntryDate: r.entryDate || r.date,
-    ShiftID: r.shiftId,
-    WorkMode: r.workMode || 'Office',
-    ClientID: r.clientId || '',
-    DeploymentID: r.assignmentId || '',
-    Project: r.projectName || '',
-    CheckIn: r.checkInTime || '',
-    CheckOut: r.checkOutTime || '',
-    TotalHours: r.totalHoursWorked,
-    OvertimeHours: r.overtimeHours,
-    AttendanceOutcome: r.status,
-    ClientVerificationStatus: r.clientVerificationStatus || 'Not Required',
-    CompanyApprovalStatus: r.companyApprovalStatus || 'Approved',
-    PayrollEligibilityStatus: r.payrollEligibilityStatus || 'Eligible for Draft Payroll',
-    ClientSupervisor: r.clientSupervisorName || '',
-    ClientSupervisorEmail: r.clientSupervisorEmail || '',
-    Source: r.source
-  }));
-
-  const hasActiveFilters =
-    empFilter !== 'ALL' ||
-    clientFilter !== 'ALL' ||
-    deploymentFilter !== 'ALL' ||
-    shiftFilter !== 'ALL' ||
-    statusFilter !== 'ALL' ||
-    clientVerFilter !== 'ALL' ||
-    companyAppFilter !== 'ALL' ||
-    payrollStatusFilter !== 'ALL' ||
-    exceptionFilter !== 'ALL' ||
-    Boolean(selectedDate) ||
-    Boolean(dateFrom) ||
-    Boolean(dateTo);
+    return {
+      total,
+      present,
+      late,
+      missing,
+      pendingManagerCorr,
+      pendingHRCorr,
+      pendingOT
+    };
+  }, [attendanceRecords, corrections, overtimeEntries]);
 
   return (
-    <div className="space-y-5">
-      {/* Check-In / Check-Out Station with Client Deployment Awareness (Section 5) */}
-      {!isMD && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-3">
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-start gap-4">
-              <div className="h-12 w-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
-                <Clock className="h-6 w-6" />
-              </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-bold text-slate-900">Today's Attendance Station ({todayStr})</h3>
-                  {myActiveDeployment ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                      <Building2 className="h-3 w-3" />
-                      Active Client Deployment: {myActiveDeployment.projectName} ({myActiveDeployment.id})
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600">
-                      Internal Company Office
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {myActiveDeployment ? (
-                    <>
-                      Client Supervisor:{' '}
-                      <span className="font-semibold text-slate-700">{myActiveDeployment.clientSupervisorName}</span>{' '}
-                      <span className="font-mono text-[11px] text-slate-500">
-                        ({myActiveDeployment.clientSupervisorEmail || 'External Email Verification Required'})
-                      </span>{' '}
-                      · No GPS tracking · Actual punch timestamps recorded
-                    </>
-                  ) : (
-                    <>
-                      Shift: <span className="font-semibold text-slate-700">General Day Shift (09:30 - 18:30)</span> · 15 min grace period
-                    </>
-                  )}
-                </p>
-              </div>
+    <div className="p-6 max-w-7xl mx-auto space-y-5">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="p-3.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-between text-xs shadow-md">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={16} />
+            <span className="font-medium">{toastMessage.text}</span>
+          </div>
+          <button onClick={() => setToastMessage(null)}>
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TOP ATTENDANCE ACTION BAR (HORIZONTAL COMPACT HEADER)      */}
+      {/* ========================================================= */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          {/* Left info: Icon, Date, Shift Name, Timings, Grace Period */}
+          <div className="flex items-center gap-3.5">
+            <div className="h-11 w-11 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
+              <Clock className="h-5 w-5" />
             </div>
-
-            <div className="flex flex-wrap items-center gap-2.5">
-              {myActiveDeployment && !myTodayRecord?.checkInTime && (
-                <select
-                  value={punchWorkMode}
-                  onChange={(e) => setPunchWorkMode(e.target.value as any)}
-                  className="px-2.5 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg text-slate-700"
-                  aria-label="Punch Location Mode"
-                >
-                  <option value="Auto">Client Site ({myActiveDeployment.projectName})</option>
-                  <option value="Office">Internal Office Visit</option>
-                </select>
-              )}
-
-              {!myTodayRecord?.checkInTime ? (
-                <button
-                  onClick={() => handlePunch('check-in')}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-2xs transition-colors"
-                >
-                  <LogIn className="h-4 w-4" />
-                  <span>{myActiveDeployment && punchWorkMode !== 'Office' ? 'Client-Site Check-In' : 'Record Check-In'}</span>
-                </button>
-              ) : !myTodayRecord?.checkOutTime ? (
-                <div className="flex items-center gap-2.5">
-                  <span className="text-xs text-slate-700">
-                    In at <span className="font-mono font-bold text-slate-900">{myTodayRecord.checkInTime}</span>
-                  </span>
-                  <button
-                    onClick={() => handlePunch('check-out')}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors"
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    <span>Check Out</span>
-                  </button>
-                </div>
-              ) : (
-                <span className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span>
-                    Shift Complete ({myTodayRecord.totalHoursWorked} hrs ·{' '}
-                    {myTodayRecord.clientVerificationStatus && myTodayRecord.clientVerificationStatus !== 'Not Required'
-                      ? `Client: ${myTodayRecord.clientVerificationStatus}`
-                      : 'Office'}
-                    )
-                  </span>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Today's Attendance ({todayStr})
+                </h3>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700">
+                  {punchWorkMode}
                 </span>
-              )}
+                {/* State Tag */}
+                {!myTodayRecord?.checkInTime ? (
+                  <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                    Not Checked In
+                  </span>
+                ) : !myTodayRecord?.checkOutTime ? (
+                  <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Checked In at {myTodayRecord.checkInTime}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                    Checked Out ({myTodayRecord.checkInTime} &rarr; {myTodayRecord.checkOutTime} · {myTodayRecord.netWorkingHours} hrs)
+                  </span>
+                )}
+              </div>
 
-              <button
-                onClick={() => {
-                  setCorrectionModalType('Manual Entry');
-                  setIsCorrectionModalOpen(true);
-                }}
-                className="px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors"
-              >
-                + Outage / Manual Entry
-              </button>
-              <button
-                onClick={() => {
-                  setCorrectionModalType('Correction');
-                  setIsCorrectionModalOpen(true);
-                }}
-                className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition-colors"
-              >
-                Forgot Check-In/Out (Correction)
-              </button>
+              <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+                <span>Shift: <strong className="text-slate-700">General Day Shift</strong> (09:30 - 18:30)</span>
+                <span>·</span>
+                <span>15 min grace period (until 09:45)</span>
+              </p>
             </div>
           </div>
 
-          {punchMessage && (
-            <div
-              className={`p-2.5 rounded-lg border text-xs flex items-center justify-between ${
-                punchMessage.type === 'error'
-                  ? 'bg-rose-50 border-rose-200 text-rose-700'
-                  : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          {/* Right Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Work Location Mode Select (when not checked in) */}
+            {!myTodayRecord?.checkInTime && (
+              <select
+                value={punchWorkMode}
+                onChange={(e) => setPunchWorkMode(e.target.value as any)}
+                className="px-2.5 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-hidden"
+              >
+                <option value="Office">Office Location</option>
+                <option value="Client Site">Client Site</option>
+                <option value="Remote">Remote</option>
+              </select>
+            )}
+
+            {/* STATE 1: NOT CHECKED IN -> Record Check-In Button */}
+            {!myTodayRecord?.checkInTime ? (
+              <button
+                onClick={handleCheckIn}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
+              >
+                <LogIn className="h-4 w-4" />
+                <span>Record Check-In</span>
+              </button>
+            ) : !myTodayRecord?.checkOutTime ? (
+              /* STATE 2: CHECKED IN -> Record Check-Out Button */
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-700 font-medium">
+                  In at <span className="font-mono font-bold text-slate-900">{myTodayRecord.checkInTime}</span>
+                </span>
+                <button
+                  onClick={handleCheckOut}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Record Check-Out</span>
+                </button>
+              </div>
+            ) : (
+              /* STATE 3: CHECKED OUT -> Complete status summary, buttons hidden */
+              <span className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                <span>Today's Shift Complete ({myTodayRecord.netWorkingHours} hrs)</span>
+              </span>
+            )}
+
+            {/* ACTION C: HR ONLY OUTAGE / MANUAL ENTRY BUTTON */}
+            {isHR && (
+              <button
+                onClick={() => setIsHRManualModalOpen(true)}
+                className="px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <ShieldAlert size={14} />
+                <span>+ Outage / Manual Entry</span>
+              </button>
+            )}
+
+            {/* ACTION B: EMPLOYEE FORGOT CHECK-IN/OUT (CORRECTION) BUTTON */}
+            <button
+              onClick={() => setIsEmployeeCorrectionModalOpen(true)}
+              className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
+            >
+              Forgot Check-In/Out (Correction)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* 1. EMPLOYEE SELF-SERVICE VIEW                             */}
+      {/* ========================================================= */}
+      {!isHR && !isReportingManager ? (
+        <div className="space-y-4">
+          {/* Sub Navigation */}
+          <div className="flex border-b border-slate-200 bg-white px-3 rounded-xl shadow-xs">
+            <button
+              onClick={() => setActiveEmpTab('history')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${
+                activeEmpTab === 'history'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
             >
-              <div className="flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{punchMessage.text}</span>
+              My Attendance History (
+              {
+                attendanceRecords.filter(
+                  (r) =>
+                    r.employeeId === currentUser?.employeeId ||
+                    r.employeeName === currentUser?.name
+                ).length
+              }
+              )
+            </button>
+            <button
+              onClick={() => setActiveEmpTab('corrections')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${
+                activeEmpTab === 'corrections'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              My Correction Requests (
+              {
+                corrections.filter(
+                  (c) =>
+                    c.employeeId === currentUser?.employeeId ||
+                    c.employeeName === currentUser?.name
+                ).length
+              }
+              )
+            </button>
+            <button
+              onClick={() => setActiveEmpTab('overtime')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${
+                activeEmpTab === 'overtime'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              My Overtime (
+              {
+                overtimeEntries.filter(
+                  (o) =>
+                    o.employeeId === currentUser?.employeeId ||
+                    o.employeeName === currentUser?.name
+                ).length
+              }
+              )
+            </button>
+          </div>
+
+          {/* TAB: My Attendance History */}
+          {activeEmpTab === 'history' && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-6">
+              <h4 className="font-bold text-slate-800 text-sm mb-4">My Attendance Log</h4>
+              {attendanceRecords.filter(
+                (r) =>
+                  r.employeeId === currentUser?.employeeId ||
+                  r.employeeName === currentUser?.name
+              ).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3">Date</th>
+                        <th className="p-3">Shift</th>
+                        <th className="p-3">Check-In</th>
+                        <th className="p-3">Check-Out</th>
+                        <th className="p-3">Working Hours</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">Source</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {attendanceRecords
+                        .filter(
+                          (r) =>
+                            r.employeeId === currentUser?.employeeId ||
+                            r.employeeName === currentUser?.name
+                        )
+                        .map((r) => (
+                          <tr key={r.id}>
+                            <td className="p-3 font-medium text-slate-800">{r.date}</td>
+                            <td className="p-3">{r.shiftName}</td>
+                            <td className="p-3 font-mono">{r.checkInTime || '--:--'}</td>
+                            <td className="p-3 font-mono">{r.checkOutTime || '--:--'}</td>
+                            <td className="p-3 font-bold text-slate-800">{r.netWorkingHours} hrs</td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="p-3 text-slate-500">{r.source}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-center py-8 text-xs text-slate-400">
+                  No attendance logged yet. Use the action bar at the top to check in.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* TAB: My Correction Requests */}
+          {activeEmpTab === 'corrections' && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-6 space-y-4">
+              <div className="flex justify-between items-center border-b pb-3">
+                <div>
+                  <h4 className="font-bold text-slate-800 text-sm">My Correction Requests</h4>
+                  <p className="text-[11px] text-slate-500">
+                    Forgot check-in/out corrections follow Reporting Manager $\rightarrow$ HR Manager approval.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsEmployeeCorrectionModalOpen(true)}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700"
+                >
+                  Request Correction
+                </button>
               </div>
-              <button onClick={() => setPunchMessage(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="h-3.5 w-3.5" />
+
+              {corrections.filter(
+                (c) =>
+                  c.employeeId === currentUser?.employeeId ||
+                  c.employeeName === currentUser?.name
+              ).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3">Request ID</th>
+                        <th className="p-3">Attendance Date</th>
+                        <th className="p-3">Correction Reason</th>
+                        <th className="p-3">Requested In/Out</th>
+                        <th className="p-3">Approval Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {corrections
+                        .filter(
+                          (c) =>
+                            c.employeeId === currentUser?.employeeId ||
+                            c.employeeName === currentUser?.name
+                        )
+                        .map((c) => (
+                          <tr key={c.id}>
+                            <td className="p-3 font-mono font-medium text-indigo-600">{c.id}</td>
+                            <td className="p-3 font-semibold text-slate-800">{c.attendanceDate}</td>
+                            <td className="p-3">{c.reasonCategory}</td>
+                            <td className="p-3 font-mono">
+                              {c.requestedCheckIn} &rarr; {c.requestedCheckOut} ({c.calculatedHours}h)
+                            </td>
+                            <td className="p-3">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                  c.status === 'HR Approved'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : c.status.includes('Rejected')
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {c.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-center py-8 text-xs text-slate-400">
+                  No correction requests submitted. Click "Request Correction" to report a missed or incorrect punch.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* TAB: My Overtime */}
+          {activeEmpTab === 'overtime' && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-6 space-y-4">
+              <div className="flex justify-between items-center border-b pb-3">
+                <div>
+                  <h4 className="font-bold text-slate-800 text-sm">My Overtime Submissions</h4>
+                  <p className="text-[11px] text-slate-500">
+                    Overtime follows Manager Approval $\rightarrow$ HR Verification.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsOvertimeModalOpen(true)}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700"
+                >
+                  Request Overtime
+                </button>
+              </div>
+
+              {overtimeEntries.filter(
+                (o) =>
+                  o.employeeId === currentUser?.employeeId ||
+                  o.employeeName === currentUser?.name
+              ).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3">ID</th>
+                        <th className="p-3">Date</th>
+                        <th className="p-3">Overtime Hours</th>
+                        <th className="p-3">Reason</th>
+                        <th className="p-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {overtimeEntries
+                        .filter(
+                          (o) =>
+                            o.employeeId === currentUser?.employeeId ||
+                            o.employeeName === currentUser?.name
+                        )
+                        .map((o) => (
+                          <tr key={o.id}>
+                            <td className="p-3 font-mono font-medium text-indigo-600">{o.id}</td>
+                            <td className="p-3 font-semibold text-slate-800">{o.attendanceDate}</td>
+                            <td className="p-3 font-bold text-slate-900">+{o.overtimeHours} hrs</td>
+                            <td className="p-3">{o.overtimeReason}</td>
+                            <td className="p-3">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                  o.status === 'Ready for Future Payroll Integration'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {o.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-center py-8 text-xs text-slate-400">
+                  No overtime logged for this session.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ========================================================= */
+        /* 2. HR & REPORTING MANAGER WORKFORCE INTERFACE             */
+        /* ========================================================= */
+        <div className="space-y-4">
+          {/* Sub Navigation */}
+          <div className="flex border-b border-slate-200 bg-white px-2 rounded-xl shadow-xs overflow-x-auto">
+            <button
+              onClick={() => setActiveHRTab('dashboard')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeHRTab === 'dashboard'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Workforce Dashboard
+            </button>
+            <button
+              onClick={() => setActiveHRTab('timesheets')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeHRTab === 'timesheets'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Timesheet Records ({attendanceRecords.length})
+            </button>
+            <button
+              onClick={() => setActiveHRTab('shifts')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeHRTab === 'shifts'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Shift Configuration ({shifts.length})
+            </button>
+            <button
+              onClick={() => setActiveHRTab('scheduling')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeHRTab === 'scheduling'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Shift Scheduling ({schedules.length})
+            </button>
+            <button
+              onClick={() => setActiveHRTab('overtime')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeHRTab === 'overtime'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Overtime Management ({overtimeEntries.length})
+            </button>
+            <button
+              onClick={() => setActiveHRTab('corrections')}
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                activeHRTab === 'corrections'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              Attendance Corrections ({corrections.length})
+            </button>
+            {isHR && (
+              <button
+                onClick={() => setActiveHRTab('manual-entries')}
+                className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                  activeHRTab === 'manual-entries'
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                HR Manual Entries ({hrManualAuditLogs.length})
               </button>
+            )}
+          </div>
+
+          {/* TAB 1: WORKFORCE DASHBOARD */}
+          {activeHRTab === 'dashboard' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] text-slate-400 uppercase font-semibold">Total Logged</span>
+                  <div className="text-xl font-bold text-slate-800 mt-1">{hrMetrics.total}</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] text-emerald-600 uppercase font-semibold">Present</span>
+                  <div className="text-xl font-bold text-emerald-700 mt-1">{hrMetrics.present}</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] text-amber-600 uppercase font-semibold">Late</span>
+                  <div className="text-xl font-bold text-amber-700 mt-1">{hrMetrics.late}</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] text-rose-600 uppercase font-semibold">Missing Punches</span>
+                  <div className="text-xl font-bold text-rose-700 mt-1">{hrMetrics.missing}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] text-indigo-600 uppercase font-semibold">
+                    Pending Manager Corrections
+                  </span>
+                  <div className="text-lg font-bold text-slate-800 mt-1">{hrMetrics.pendingManagerCorr}</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] text-purple-600 uppercase font-semibold">
+                    Pending HR Final Verification
+                  </span>
+                  <div className="text-lg font-bold text-slate-800 mt-1">{hrMetrics.pendingHRCorr}</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                  <span className="text-[11px] text-blue-600 uppercase font-semibold">
+                    Overtime Awaiting Verification
+                  </span>
+                  <div className="text-lg font-bold text-slate-800 mt-1">{hrMetrics.pendingOT}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: TIMESHEETS */}
+          {activeHRTab === 'timesheets' && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+              {attendanceRecords.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3.5">Record ID</th>
+                        <th className="p-3.5">Employee</th>
+                        <th className="p-3.5">Date</th>
+                        <th className="p-3.5">Shift</th>
+                        <th className="p-3.5">Punches</th>
+                        <th className="p-3.5">Net Hours</th>
+                        <th className="p-3.5">Status</th>
+                        <th className="p-3.5">Source</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {attendanceRecords.map((r) => (
+                        <tr key={r.id}>
+                          <td className="p-3.5 font-mono font-medium text-indigo-600">{r.id}</td>
+                          <td className="p-3.5 font-semibold text-slate-800">{r.employeeName}</td>
+                          <td className="p-3.5">{r.date}</td>
+                          <td className="p-3.5">{r.shiftName}</td>
+                          <td className="p-3.5 font-mono">
+                            {r.checkInTime || '--:--'} &rarr; {r.checkOutTime || '--:--'}
+                          </td>
+                          <td className="p-3.5 font-bold text-slate-800">{r.netWorkingHours} hrs</td>
+                          <td className="p-3.5">
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+                              {r.status}
+                            </span>
+                          </td>
+                          <td className="p-3.5">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                r.source === 'Manual HR Entry'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : r.source === 'Correction Regularization'
+                                  ? 'bg-indigo-100 text-indigo-800'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {r.source}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-10 text-center text-xs text-slate-400">
+                  No attendance records in current session. Use Top Action Bar or "+ Outage / Manual Entry" to record attendance.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: SHIFT CONFIGURATION */}
+          {activeHRTab === 'shifts' && (
+            <div className="space-y-3">
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setIsShiftModalOpen(true)}
+                  className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5"
+                >
+                  <Plus size={15} />
+                  Configure Shift
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {shifts.map((s) => (
+                  <div key={s.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-bold text-slate-800 text-sm">{s.name}</h4>
+                        <span className="text-xs font-mono text-indigo-600 font-medium">{s.code}</span>
+                      </div>
+                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full">
+                        Active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 text-xs text-slate-600">
+                      <div>Timing: {s.startTime} - {s.endTime}</div>
+                      <div>Working: {s.totalWorkingHours} hrs</div>
+                      <div>Grace Period: {s.gracePeriodMinutes} mins</div>
+                      <div>Break: {s.breakDurationMinutes} mins</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: SHIFT SCHEDULING */}
+          {activeHRTab === 'scheduling' && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-6 space-y-4">
+              <div className="flex justify-between items-center border-b pb-3">
+                <h4 className="font-bold text-slate-800 text-sm">Shift Rosters</h4>
+                <button
+                  onClick={() => setIsScheduleModalOpen(true)}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5"
+                >
+                  <Plus size={15} />
+                  Schedule Shift
+                </button>
+              </div>
+              {schedules.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3">Schedule ID</th>
+                        <th className="p-3">Employee</th>
+                        <th className="p-3">Shift</th>
+                        <th className="p-3">Date Range</th>
+                        <th className="p-3">Assigned By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {schedules.map((sch) => (
+                        <tr key={sch.id}>
+                          <td className="p-3 font-mono text-indigo-600 font-medium">{sch.id}</td>
+                          <td className="p-3 font-semibold text-slate-800">{sch.employeeName}</td>
+                          <td className="p-3">{sch.shiftName}</td>
+                          <td className="p-3 font-mono">{sch.startDate} &rarr; {sch.endDate}</td>
+                          <td className="p-3 text-slate-500">{sch.assignedBy}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-center py-8 text-xs text-slate-400">
+                  No shift schedules created for this session.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* TAB 5: OVERTIME MANAGEMENT */}
+          {activeHRTab === 'overtime' && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+              {overtimeEntries.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3.5">ID</th>
+                        <th className="p-3.5">Employee</th>
+                        <th className="p-3.5">Date</th>
+                        <th className="p-3.5">Overtime Hours</th>
+                        <th className="p-3.5">Reason</th>
+                        <th className="p-3.5">Status</th>
+                        <th className="p-3.5 text-right">Approval Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {overtimeEntries.map((ot) => (
+                        <tr key={ot.id}>
+                          <td className="p-3.5 font-mono text-indigo-600 font-medium">{ot.id}</td>
+                          <td className="p-3.5 font-semibold text-slate-800">{ot.employeeName}</td>
+                          <td className="p-3.5">{ot.attendanceDate}</td>
+                          <td className="p-3.5 font-bold text-slate-900">+{ot.overtimeHours} hrs</td>
+                          <td className="p-3.5">{ot.overtimeReason}</td>
+                          <td className="p-3.5">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                ot.status === 'Ready for Future Payroll Integration'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : ot.status === 'Manager Approved'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {ot.status}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-right space-x-1.5">
+                            {ot.status === 'Pending Manager Approval' && (
+                              <>
+                                <button
+                                  onClick={() => handleManagerOTDecision(ot, 'Approved')}
+                                  className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md font-semibold hover:bg-indigo-100"
+                                >
+                                  Manager Approve
+                                </button>
+                                <button
+                                  onClick={() => handleManagerOTDecision(ot, 'Rejected')}
+                                  className="px-2 py-1 text-xs bg-rose-50 text-rose-700 border border-rose-200 rounded-md font-semibold hover:bg-rose-100"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                            {ot.status === 'Manager Approved' && isHR && (
+                              <>
+                                <button
+                                  onClick={() => handleHROTDecision(ot, 'Approved')}
+                                  className="px-2 py-1 text-xs bg-emerald-600 text-white rounded-md font-semibold hover:bg-emerald-700"
+                                >
+                                  HR Final Verify
+                                </button>
+                                <button
+                                  onClick={() => handleHROTDecision(ot, 'Rejected')}
+                                  className="px-2 py-1 text-xs bg-rose-600 text-white rounded-md font-semibold hover:bg-rose-700"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-10 text-center text-xs text-slate-400">
+                  No overtime entries submitted. Overtime claims follow: Reporting Manager $\rightarrow$ HR Verification $\rightarrow$ Payroll Readiness.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 6: ATTENDANCE CORRECTIONS (MANDATORY 2-TIER WORKFLOW) */}
+          {activeHRTab === 'corrections' && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+              {corrections.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3.5">ID</th>
+                        <th className="p-3.5">Employee</th>
+                        <th className="p-3.5">Attendance Date</th>
+                        <th className="p-3.5">Reason</th>
+                        <th className="p-3.5">Requested In/Out</th>
+                        <th className="p-3.5">Status</th>
+                        <th className="p-3.5 text-right">Approval Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {corrections.map((c) => (
+                        <tr key={c.id}>
+                          <td className="p-3.5 font-mono text-indigo-600 font-medium">{c.id}</td>
+                          <td className="p-3.5 font-semibold text-slate-800">{c.employeeName}</td>
+                          <td className="p-3.5 font-medium text-slate-700">{c.attendanceDate}</td>
+                          <td className="p-3.5">{c.reasonCategory}</td>
+                          <td className="p-3.5 font-mono">
+                            {c.requestedCheckIn} &rarr; {c.requestedCheckOut} ({c.calculatedHours}h)
+                          </td>
+                          <td className="p-3.5">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                c.status === 'HR Approved'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : c.status === 'Pending HR Approval'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : c.status.includes('Rejected')
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {c.status}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-right space-x-1.5">
+                            {/* Manager Stage */}
+                            {c.status === 'Pending Manager Approval' && (
+                              <>
+                                <button
+                                  onClick={() => handleManagerCorrectionDecision(c, 'Approved')}
+                                  className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md font-semibold hover:bg-indigo-100"
+                                >
+                                  Manager Approve
+                                </button>
+                                <button
+                                  onClick={() => handleManagerCorrectionDecision(c, 'Rejected')}
+                                  className="px-2 py-1 text-xs bg-rose-50 text-rose-700 border border-rose-200 rounded-md font-semibold hover:bg-rose-100"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+
+                            {/* HR Stage */}
+                            {c.status === 'Pending HR Approval' && isHR && (
+                              <>
+                                <button
+                                  onClick={() => handleHRCorrectionDecision(c, 'Approved')}
+                                  className="px-2.5 py-1 text-xs bg-emerald-600 text-white rounded-md font-semibold hover:bg-emerald-700"
+                                >
+                                  HR Final Approve
+                                </button>
+                                <button
+                                  onClick={() => handleHRCorrectionDecision(c, 'Rejected')}
+                                  className="px-2.5 py-1 text-xs bg-rose-600 text-white rounded-md font-semibold hover:bg-rose-700"
+                                >
+                                  HR Reject
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-10 text-center text-xs text-slate-400">
+                  No employee correction requests in queue.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 7: HR MANUAL ENTRIES AUDIT LOG */}
+          {activeHRTab === 'manual-entries' && isHR && (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+              {hrManualAuditLogs.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
+                      <tr>
+                        <th className="p-3.5">Log ID</th>
+                        <th className="p-3.5">Employee</th>
+                        <th className="p-3.5">Attendance Date</th>
+                        <th className="p-3.5">Exception / Outage Type</th>
+                        <th className="p-3.5">Incident Ref</th>
+                        <th className="p-3.5">Remarks</th>
+                        <th className="p-3.5">Recorded By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {hrManualAuditLogs.map((log) => (
+                        <tr key={log.id}>
+                          <td className="p-3.5 font-mono text-purple-600 font-medium">{log.id}</td>
+                          <td className="p-3.5 font-semibold text-slate-800">{log.employeeName}</td>
+                          <td className="p-3.5">{log.attendanceDate}</td>
+                          <td className="p-3.5 font-medium text-slate-800">{log.outageType}</td>
+                          <td className="p-3.5 font-mono">{log.incidentRef || '—'}</td>
+                          <td className="p-3.5 text-slate-600">{log.remarks}</td>
+                          <td className="p-3.5 text-slate-500 font-medium">{log.enteredBy}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-10 text-center text-xs text-slate-400">
+                  No manual attendance entries recorded by HR yet. Click "+ Outage / Manual Entry" at the top to record attendance during biometric or system outages.
+                </div>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* 7 Mandatory Attendance & Client Verification Summary KPIs (Section 11) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
-        <div
-          onClick={() => {
-            setClientVerFilter('ALL');
-            setCompanyAppFilter('ALL');
-            setPayrollStatusFilter('ALL');
-          }}
-          className="bg-white p-3 rounded-xl border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">1. Total Recorded</p>
-          <p className="text-xl font-bold text-slate-900 mt-1">{kpiStats.total}</p>
-          <p className="text-[10px] text-slate-500">All scoped logs</p>
-        </div>
-        <div
-          onClick={() => {
-            setActiveTab('records');
-            setClientVerFilter('Pending');
-          }}
-          className="bg-white p-3 rounded-xl border border-amber-200 cursor-pointer hover:bg-amber-50/40 transition-colors"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">2. Pending Client Email</p>
-          <p className="text-xl font-bold text-amber-700 mt-1">{kpiStats.pendingClientVer}</p>
-          <p className="text-[10px] text-amber-600">Awaiting supervisor reply</p>
-        </div>
-        <div
-          onClick={() => {
-            setActiveTab('records');
-            setClientVerFilter('Verified');
-          }}
-          className="bg-white p-3 rounded-xl border border-blue-200 cursor-pointer hover:bg-blue-50/40 transition-colors"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-700">3. Client Verified</p>
-          <p className="text-xl font-bold text-blue-700 mt-1">{kpiStats.verifiedClient}</p>
-          <p className="text-[10px] text-blue-600">Email confirmation logged</p>
-        </div>
-        <div
-          onClick={() => {
-            setActiveTab('records');
-            setClientVerFilter('Disputed');
-          }}
-          className="bg-white p-3 rounded-xl border border-rose-200 cursor-pointer hover:bg-rose-50/40 transition-colors"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-rose-700">4. Disputed Hours</p>
-          <p className="text-xl font-bold text-rose-700 mt-1">{kpiStats.disputed}</p>
-          <p className="text-[10px] text-rose-600">Flagged for resolution</p>
-        </div>
-        <div
-          onClick={() => {
-            setActiveTab('records');
-            setCompanyAppFilter('Pending');
-          }}
-          className="bg-white p-3 rounded-xl border border-purple-200 cursor-pointer hover:bg-purple-50/40 transition-colors"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-700">5. Pending Company App.</p>
-          <p className="text-xl font-bold text-purple-700 mt-1">{kpiStats.pendingCompany}</p>
-          <p className="text-[10px] text-purple-600">Awaiting Manager / HR</p>
-        </div>
-        <div
-          onClick={() => {
-            setActiveTab('records');
-            setCompanyAppFilter('Approved');
-          }}
-          className="bg-white p-3 rounded-xl border border-emerald-200 cursor-pointer hover:bg-emerald-50/40 transition-colors"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">6. Company Approved</p>
-          <p className="text-xl font-bold text-emerald-700 mt-1">{kpiStats.approvedCompany}</p>
-          <p className="text-[10px] text-emerald-600">Internal sign-off complete</p>
-        </div>
-        <div
-          onClick={() => {
-            setActiveTab('records');
-            setCompanyAppFilter('Approved');
-          }}
-          className="bg-white p-3 rounded-xl border border-indigo-200 cursor-pointer hover:bg-indigo-50/40 transition-colors"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">7. Payroll Eligible</p>
-          <p className="text-xl font-bold text-indigo-700 mt-1">{kpiStats.payrollEligible}</p>
-          <p className="text-[10px] text-indigo-600">Approved & undisputed</p>
-        </div>
-      </div>
+      {/* ========================================================= */}
+      {/* MODAL B: EMPLOYEE FORGOT CHECK-IN/OUT CORRECTION          */}
+      {/* ========================================================= */}
+      <EmployeeCorrectionModal
+        isOpen={isEmployeeCorrectionModalOpen}
+        onClose={() => setIsEmployeeCorrectionModalOpen(false)}
+        existingRecords={attendanceRecords}
+        onSubmitCorrection={handleSaveCorrection}
+      />
 
-      {/* Tabs and Actions Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
-        <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg">
-          <button
-            onClick={() => setActiveTab('records')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              activeTab === 'records' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Timesheet Records ({visibleRecords.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('corrections')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              activeTab === 'corrections' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Exceptions & Corrections Queue ({pendingCorrections.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('verifications')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              activeTab === 'verifications' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            External Client Email Log ({clientConfirmations.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('shifts')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              activeTab === 'shifts' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Configured Shifts ({shifts.length})
-          </button>
-        </div>
+      {/* ========================================================= */}
+      {/* MODAL C: HR OUTAGE / MANUAL ATTENDANCE ENTRY              */}
+      {/* ========================================================= */}
+      <HRManualEntryModal
+        isOpen={isHRManualModalOpen}
+        onClose={() => setIsHRManualModalOpen(false)}
+        shifts={shifts}
+        onSaveManualEntry={handleSaveHRManualEntry}
+      />
 
-        <div className="flex flex-wrap items-center gap-2">
-          {onOpenPolicies && (
-            <button
-              type="button"
-              onClick={onOpenPolicies}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors"
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Attendance Policies &rarr;</span>
-            </button>
-          )}
-          {isHR && activeTab === 'records' && (
-            <button
-              onClick={() => setIsImportOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg"
-            >
-              <Upload className="h-3.5 w-3.5" />
-              <span>Import Punches</span>
-            </button>
-          )}
-          {isHR && activeTab === 'shifts' && (
-            <button
-              onClick={openAddShift}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Add Shift</span>
-            </button>
-          )}
-          <ExportButton data={exportData} fileName="Orbyx_Attendance_Log" />
-        </div>
-      </div>
+      {/* Modal: Schedule Shift */}
+      {isScheduleModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-bold text-slate-800 text-sm">Assign Shift to Employee</h3>
+              <button onClick={() => setIsScheduleModalOpen(false)}>
+                <X size={16} />
+              </button>
+            </div>
 
-      {/* Extended Filter Bar for Records (Section 11) */}
-      {activeTab === 'records' && (
-        <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3 text-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-            {(isHR || isMD || isManager) && (
+            <form onSubmit={handleSaveSchedule} className="space-y-3 text-xs">
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Employee</label>
+                <label className="block text-slate-700 font-semibold mb-1">Employee Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={scheduleForm.employeeName}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, employeeName: e.target.value })}
+                  placeholder="e.g. Archana"
+                  className="w-full px-3 py-2 border rounded-lg text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Shift Type</label>
                 <select
-                  value={empFilter}
-                  onChange={(e) => setEmpFilter(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
+                  value={scheduleForm.shiftId}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, shiftId: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-xs bg-white"
                 >
-                  <option value="ALL">All Employees</option>
-                  {employees.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.firstName} {e.lastName} ({e.id})
+                  {shifts.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.startTime} - {s.endTime})
                     </option>
                   ))}
                 </select>
               </div>
-            )}
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Client Organization</label>
-              <select
-                value={clientFilter}
-                onChange={(e) => setClientFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              >
-                <option value="ALL">All Clients & Office</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.id})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Project / Deployment</label>
-              <select
-                value={deploymentFilter}
-                onChange={(e) => setDeploymentFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              >
-                <option value="ALL">All Deployments</option>
-                {deployments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.projectName} ({d.id} - {d.employeeId})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Client Verification Status</label>
-              <select
-                value={clientVerFilter}
-                onChange={(e) => setClientVerFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              >
-                <option value="ALL">All Client Verification</option>
-                <option value="Not Required">Not Required (Office)</option>
-                <option value="Pending">Pending</option>
-                <option value="Verification Requested">Verification Requested</option>
-                <option value="Verified">Verified</option>
-                <option value="Disputed">Disputed</option>
-                <option value="Correction Requested">Correction Requested</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Company Approval Status</label>
-              <select
-                value={companyAppFilter}
-                onChange={(e) => setCompanyAppFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              >
-                <option value="ALL">All Company Approvals</option>
-                <option value="Pending">Pending</option>
-                <option value="Approved">Approved</option>
-                <option value="Rejected">Rejected</option>
-                <option value="Returned for Correction">Returned for Correction</option>
-              </select>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end pt-2 border-t border-slate-100">
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Payroll Processing Status</label>
-              <select
-                value={payrollStatusFilter}
-                onChange={(e) => setPayrollStatusFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              >
-                <option value="ALL">All Payroll Statuses</option>
-                <option value="Not Eligible">Not Eligible</option>
-                <option value="Eligible for Draft Payroll">Eligible for Draft Payroll</option>
-                <option value="Included in Draft Payroll">Included in Draft Payroll</option>
-                <option value="Finalized">Finalized</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Attendance Outcome</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              >
-                <option value="ALL">All Outcomes</option>
-                <option value="Present">Present</option>
-                <option value="Late">Late</option>
-                <option value="Half Day">Half Day</option>
-                <option value="Absent">Absent</option>
-                <option value="On Leave">On Leave</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Date From</label>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Date To</label>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-              />
-            </div>
-            <div className="flex items-end gap-1.5">
-              <div className="flex-1">
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Exact Date</label>
-                <input
-                  type="date"
-                  aria-label="Attendance Date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg"
-                />
-              </div>
-              {hasActiveFilters && (
-                <button
-                  onClick={() => {
-                    setEmpFilter('ALL');
-                    setClientFilter('ALL');
-                    setDeploymentFilter('ALL');
-                    setShiftFilter('ALL');
-                    setStatusFilter('ALL');
-                    setClientVerFilter('ALL');
-                    setCompanyAppFilter('ALL');
-                    setPayrollStatusFilter('ALL');
-                    setExceptionFilter('ALL');
-                    setSelectedDate('');
-                    setDateFrom('');
-                    setDateTo('');
-                  }}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg shrink-0"
-                  title="Clear Filters"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  <span>Reset</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Content: Records */}
-      {activeTab === 'records' && (
-        <DataTable
-          data={visibleRecords}
-          columns={recordColumns}
-          searchPlaceholder="Search punches by employee ID, project, or date..."
-        />
-      )}
-
-      {/* Content: Corrections */}
-      {activeTab === 'corrections' && (
-        <DataTable
-          data={isHR || isMD ? corrections : corrections.filter((c) => c.employeeId === currentUser.employeeId || canApproveRequestFor(c.employeeId))}
-          columns={corrColumns}
-          searchPlaceholder="Filter correction & outage requests..."
-          emptyMessage="No attendance correction or manual entry requests."
-        />
-      )}
-
-      {/* Content: External Client Email Verification Log (Section 6) */}
-      {activeTab === 'verifications' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3 text-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
-            <div>
-              <h4 className="text-sm font-bold text-slate-900">External Client Supervisor Email Confirmation Audit Log</h4>
-              <p className="text-[11px] text-slate-500">
-                External client supervisors have zero login access to Orbyx HRMS. Their email replies are logged here as auditable verification evidence before internal Manager/HR approval.
-              </p>
-            </div>
-            <span className="px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-semibold">
-              Mode: Manual Recording by Authorized Internal User (No Live SMTP/IMAP Configured)
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 text-[11px] text-slate-500 uppercase">
-                  <th className="py-2 px-3">Ref ID & Coverage</th>
-                  <th className="py-2 px-3">Employee & Client</th>
-                  <th className="py-2 px-3">External Supervisor Sender</th>
-                  <th className="py-2 px-3">Decision & Claim</th>
-                  <th className="py-2 px-3">Subject & Summary</th>
-                  <th className="py-2 px-3">Recorded By (Internal)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {clientConfirmations.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 px-3 font-mono text-[11px]">
-                      <span className="font-bold text-slate-900 block">{c.id}</span>
-                      <span className="text-[10px] text-indigo-600">{c.coverageType || 'Single Date'}</span>
-                      <span className="text-[10px] text-slate-400 block">
-                        {c.coveredDates ? c.coveredDates.join(', ') : c.attendanceDate}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-semibold text-slate-900 block">{c.employeeName || c.employeeId}</span>
-                      <span className="text-[10px] text-slate-500">{c.clientName} · {c.projectName}</span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-medium text-slate-800 block">{c.clientSupervisorName || c.confirmedByEmail}</span>
-                      <span className="font-mono text-[10px] text-slate-500 block">{c.confirmedByEmail}</span>
-                      <span className="text-[10px] text-slate-400">Ref: {c.messageReference}</span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded text-[10px] font-semibold ${
-                          (c.decision || 'Verified') === 'Verified'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : c.decision === 'Disputed'
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}
-                      >
-                        {c.decision || 'Verified'}
-                      </span>
-                      {c.claimedHours !== undefined && (
-                        <span className="text-[10px] text-rose-700 font-mono block mt-0.5">
-                          Claimed: {c.claimedCheckIn}-{c.claimedCheckOut} ({c.claimedHours}h)
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 max-w-xs">
-                      <span className="font-medium text-slate-800 block truncate">{c.emailSubject}</span>
-                      <span className="text-[11px] text-slate-500 block">{c.summary}</span>
-                      {c.disputeDetails && (
-                        <span className="text-[10px] text-rose-600 block mt-0.5">Dispute: {c.disputeDetails}</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] text-slate-600">
-                      <span className="font-semibold text-slate-800 block">{c.recordedBy}</span>
-                      <span className="text-[10px] text-slate-400 block">{c.confirmedAt}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Content: Shifts */}
-      {activeTab === 'shifts' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          {shifts.map((s) => {
-            const active = s.isActive !== false;
-            return (
-              <div
-                key={s.id}
-                className={`p-4 bg-white rounded-xl border shadow-xs space-y-3 ${
-                  active ? 'border-slate-200' : 'border-slate-200 opacity-65 bg-slate-50'
-                }`}
-              >
-                <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                  <div>
-                    <span className="font-bold text-slate-900 block">{s.name}</span>
-                    <span className="font-mono text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
-                      {s.code}
-                    </span>
-                  </div>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                      active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200 text-slate-600'
-                    }`}
-                  >
-                    {active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-                <div className="space-y-1.5 text-slate-600">
-                  <div className="flex justify-between"><span className="text-slate-400">Timings:</span><span className="font-mono font-medium">{s.startTime} - {s.endTime}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400">Total Duration:</span><span>{s.totalWorkingHours} hours</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400">Grace Period:</span><span>{s.gracePeriodMinutes} mins</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400">Break Duration:</span><span>{s.breakDurationMinutes} mins</span></div>
-                  <div className="flex justify-between"><span className="text-slate-400">Weekly Offs:</span><span>Saturday, Sunday</span></div>
-                </div>
-                {isHR && (
-                  <div className="pt-2 border-t border-slate-100 flex justify-end gap-2">
-                    <button
-                      onClick={() => openEditShift(s)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded"
-                    >
-                      <Edit3 className="h-3 w-3" /> Edit
-                    </button>
-                    <button
-                      onClick={() => toggleShiftActive(s)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 rounded"
-                    >
-                      <Power className="h-3 w-3" /> {active ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Modal 1: Prepare External Client Verification Email (Section 6) */}
-      {prepModalRec && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white rounded-xl max-w-xl w-full p-6 shadow-xl border border-slate-200 space-y-4 text-xs max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h4 className="text-base font-bold text-slate-900">Prepare External Client Supervisor Verification Email</h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Client supervisors verify attendance by ordinary email reply without any Orbyx HRMS account or login.
-                </p>
-              </div>
-              <button onClick={() => setPrepModalRec(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
-              <strong>Honest Email Integration Status:</strong> Live external SMTP/IMAP email server integration is not configured in this local-storage MVP. Prepare the structured email draft below, send via your mail client, and record the client supervisor's email response in Orbyx HRMS.
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Verification Coverage Scope</label>
-              <div className="grid grid-cols-4 gap-2">
-                {(['Single Date', 'Multiple Dates', 'Weekly Timesheet', 'Date Range'] as const).map((cov) => (
-                  <button
-                    key={cov}
-                    type="button"
-                    onClick={() => regenerateDraftForCoverage(cov, prepModalRec.rec, prepModalRec.corr)}
-                    className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${
-                      prepModalRec.coverageType === cov
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    {cov}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {prepModalRec.draft && (
-              <div className="space-y-2.5">
-                <div className="grid grid-cols-2 gap-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">Verification Reference ID</span>
-                    <span className="font-mono font-bold text-indigo-700">{prepModalRec.draft.referenceId}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">Recipient (Client Supervisor)</span>
-                    <span className="font-semibold text-slate-800">{prepModalRec.draft.supervisorName}</span>
-                    <span className="font-mono text-[10px] text-slate-500 block">{prepModalRec.draft.supervisorEmail}</span>
-                  </div>
-                </div>
-
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Email Subject</label>
-                  <input
-                    readOnly
-                    value={prepModalRec.draft.subject}
-                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Email Body (Confidential salary, bank & ID data excluded per Section 6.1)
-                  </label>
-                  <textarea
-                    readOnly
-                    value={prepModalRec.draft.body}
-                    rows={10}
-                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg font-mono text-[11px]"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
-              <div className="flex items-center gap-2">
-                {prepModalRec.draft && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard?.writeText(
-                          `To: ${prepModalRec.draft?.supervisorEmail}\nSubject: ${prepModalRec.draft?.subject}\n\n${prepModalRec.draft?.body}`
-                        );
-                        setPrepModalRec({ ...prepModalRec, copied: true });
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg font-semibold"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      <span>{prepModalRec.copied ? 'Copied Draft!' : 'Copy Email Draft'}</span>
-                    </button>
-                    <a
-                      href={`mailto:${encodeURIComponent(prepModalRec.draft.supervisorEmail)}?subject=${encodeURIComponent(
-                        prepModalRec.draft.subject
-                      )}&body=${encodeURIComponent(prepModalRec.draft.body)}`}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg font-semibold"
-                    >
-                      <Mail className="h-3.5 w-3.5" />
-                      <span>Open in Mail Client</span>
-                    </a>
-                  </>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setPrepModalRec(null)}
-                className="px-4 py-1.5 bg-slate-900 text-white font-semibold rounded-lg"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal 2: Record External Client Supervisor Email Response (Scenarios B & D) */}
-      {recordEmailModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <form
-            onSubmit={handleSaveClientEmailResponse}
-            className="bg-white rounded-xl max-w-xl w-full p-6 shadow-xl border border-slate-200 space-y-3.5 text-xs max-h-[92vh] overflow-y-auto"
-          >
-            <div className="flex items-start justify-between border-b border-slate-100 pb-2.5">
-              <div>
-                <h4 className="text-base font-bold text-slate-900">Record External Client Supervisor Email Response</h4>
-                <p className="text-[11px] text-slate-500">
-                  Stage 1 External Verification · Does not auto-approve Stage 2 Company Approval.
-                </p>
-              </div>
-              <button type="button" onClick={() => setRecordEmailModal(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {recordEmailModal.error && (
-              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700">
-                {recordEmailModal.error}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Client Supervisor Decision *</label>
-                <select
-                  value={recordEmailModal.decision}
-                  onChange={(e) =>
-                    setRecordEmailModal({
-                      ...recordEmailModal,
-                      decision: e.target.value as any
-                    })
-                  }
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg font-semibold"
-                >
-                  <option value="Verified">Verified (Confirmed Hours)</option>
-                  <option value="Disputed">Disputed (Scenario D - Hours Disputed)</option>
-                  <option value="Correction Requested">Correction Requested</option>
-                  <option value="Absent">Marked Absent by Client</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Confirmation Coverage Scope *</label>
-                <select
-                  value={recordEmailModal.coverageType}
-                  onChange={(e) =>
-                    setRecordEmailModal({
-                      ...recordEmailModal,
-                      coverageType: e.target.value as any
-                    })
-                  }
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                >
-                  <option value="Single Date">Single Date</option>
-                  <option value="Multiple Dates">Multiple Dates</option>
-                  <option value="Weekly Timesheet">Weekly Timesheet</option>
-                  <option value="Date Range">Date Range</option>
-                </select>
-              </div>
-            </div>
-
-            {recordEmailModal.coverageType !== 'Single Date' && (
-              <div className="grid grid-cols-2 gap-3 p-2.5 bg-indigo-50/50 rounded-lg border border-indigo-100">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Covered Start Date *</label>
+                  <label className="block text-slate-700 font-semibold mb-1">Start Date</label>
                   <input
                     type="date"
-                    value={recordEmailModal.coveredStartDate}
-                    onChange={(e) => setRecordEmailModal({ ...recordEmailModal, coveredStartDate: e.target.value })}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Covered End Date *</label>
-                  <input
-                    type="date"
-                    value={recordEmailModal.coveredEndDate}
-                    onChange={(e) => setRecordEmailModal({ ...recordEmailModal, coveredEndDate: e.target.value })}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Client Supervisor Name *</label>
-                <input
-                  required
-                  value={recordEmailModal.senderName}
-                  onChange={(e) => setRecordEmailModal({ ...recordEmailModal, senderName: e.target.value })}
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Client Supervisor Official Email *</label>
-                <input
-                  required
-                  type="email"
-                  value={recordEmailModal.senderEmail}
-                  onChange={(e) => setRecordEmailModal({ ...recordEmailModal, senderEmail: e.target.value })}
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Email Received Date & Time *</label>
-                <input
-                  required
-                  type="datetime-local"
-                  value={recordEmailModal.emailReceivedAt}
-                  onChange={(e) => setRecordEmailModal({ ...recordEmailModal, emailReceivedAt: e.target.value })}
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Email Message ID / Reference *</label>
-                <input
-                  required
-                  value={recordEmailModal.messageReference}
-                  onChange={(e) => setRecordEmailModal({ ...recordEmailModal, messageReference: e.target.value })}
-                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg font-mono"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Email Subject Line *</label>
-              <input
-                required
-                value={recordEmailModal.emailSubject}
-                onChange={(e) => setRecordEmailModal({ ...recordEmailModal, emailSubject: e.target.value })}
-                className="w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-              />
-            </div>
-
-            {(recordEmailModal.decision === 'Disputed' || recordEmailModal.decision === 'Correction Requested') && (
-              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 space-y-2.5">
-                <p className="font-bold text-rose-800">Scenario D - Client Disputed Working Hours Details</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-rose-700 mb-1">Client Claimed Check-In</label>
-                    <input
-                      type="time"
-                      value={recordEmailModal.claimedCheckIn}
-                      onChange={(e) => setRecordEmailModal({ ...recordEmailModal, claimedCheckIn: e.target.value })}
-                      className="w-full px-2 py-1 bg-white border border-rose-200 rounded font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-rose-700 mb-1">Client Claimed Check-Out</label>
-                    <input
-                      type="time"
-                      value={recordEmailModal.claimedCheckOut}
-                      onChange={(e) => setRecordEmailModal({ ...recordEmailModal, claimedCheckOut: e.target.value })}
-                      className="w-full px-2 py-1 bg-white border border-rose-200 rounded font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-rose-700 mb-1">Client Claimed Hours</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={recordEmailModal.claimedHours}
-                      onChange={(e) => setRecordEmailModal({ ...recordEmailModal, claimedHours: e.target.value })}
-                      className="w-full px-2 py-1 bg-white border border-rose-200 rounded font-mono"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-rose-700 mb-1">Dispute Statement from Client Email *</label>
-                  <textarea
                     required
-                    value={recordEmailModal.disputeDetails}
-                    onChange={(e) => setRecordEmailModal({ ...recordEmailModal, disputeDetails: e.target.value })}
-                    placeholder="e.g., Employee left client site at 16:30 after sprint demo; only 6 billable hours confirmed."
-                    className="w-full p-2 bg-white border border-rose-200 rounded"
-                    rows={2}
+                    value={scheduleForm.startDate}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, startDate: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">End Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={scheduleForm.endDate}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, endDate: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
                   />
                 </div>
               </div>
-            )}
 
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Email Confirmation Summary / Excerpt *</label>
-              <textarea
-                required
-                value={recordEmailModal.summary}
-                onChange={(e) => setRecordEmailModal({ ...recordEmailModal, summary: e.target.value })}
-                rows={2}
-                className="w-full p-2.5 border border-slate-200 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Supporting Email Attachment Reference (Optional)</label>
-              <input
-                value={recordEmailModal.supportingAttachmentRef}
-                onChange={(e) => setRecordEmailModal({ ...recordEmailModal, supportingAttachmentRef: e.target.value })}
-                placeholder="e.g., signed_weekly_timesheet_oct26.pdf"
-                className="w-full px-3 py-1.5 border border-slate-200 rounded-lg font-mono"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setRecordEmailModal(null)}
-                className="px-3 py-1.5 text-slate-700 border border-slate-200 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg"
-              >
-                Save External Email Confirmation
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Modal 3: Scenario D - Client Dispute Clarification & Internal Resolution */}
-      {disputeModalRec && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 space-y-4 text-xs max-h-[92vh] overflow-y-auto">
-            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h4 className="text-base font-bold text-slate-900">
-                  Scenario D - Client Attendance Dispute Review & Resolution ({disputeModalRec.employeeId} · {disputeModalRec.date})
-                </h4>
-                <p className="text-[11px] text-slate-500">
-                  Preserves original employee timestamps, client supervisor dispute details, employee clarification, and internal Manager/HR resolution.
-                </p>
-              </div>
-              <button onClick={() => setDisputeModalRec(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {disputeModalError && (
-              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700">
-                {disputeModalError}
-              </div>
-            )}
-
-            {/* Side-by-side comparison of Original vs Client Dispute */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                <span className="text-[10px] font-bold uppercase text-slate-500">Preserved Original Employee Record</span>
-                <p className="font-mono font-bold text-slate-900 text-sm">
-                  {disputeModalRec.originalCheckIn || disputeModalRec.checkInTime || '--:--'} &rarr;{' '}
-                  {disputeModalRec.originalCheckOut || disputeModalRec.checkOutTime || '--:--'} (
-                  {disputeModalRec.originalHours ?? disputeModalRec.totalHoursWorked} hrs)
-                </p>
-                <p className="text-[11px] text-slate-600">
-                  Current Active: {disputeModalRec.checkInTime} - {disputeModalRec.checkOutTime} ({disputeModalRec.totalHoursWorked} hrs)
-                </p>
-              </div>
-
-              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 space-y-1">
-                <span className="text-[10px] font-bold uppercase text-rose-700">
-                  External Client Supervisor Dispute ({disputeModalRec.clientSupervisorName})
-                </span>
-                <p className="font-mono font-bold text-rose-900 text-sm">
-                  Claimed: {disputeModalRec.clientClaimedCheckIn || '--:--'} &rarr;{' '}
-                  {disputeModalRec.clientClaimedCheckOut || '--:--'} ({disputeModalRec.clientClaimedHours ?? '--'} hrs)
-                </p>
-                <p className="text-[11px] text-rose-800">{disputeModalRec.disputeDetails || 'Disputed via external email.'}</p>
-              </div>
-            </div>
-
-            {/* Step 1: Employee / Reporting Manager Clarification */}
-            <div className="p-3.5 rounded-lg border border-indigo-200 bg-indigo-50/40 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-indigo-950">Step 1: Employee / Manager Clarification & Evidence</span>
-                {disputeModalRec.employeeClarificationAt && (
-                  <span className="text-[10px] text-indigo-700">
-                    Submitted by {disputeModalRec.employeeClarificationBy} on {disputeModalRec.employeeClarificationAt.slice(0, 10)}
-                  </span>
-                )}
-              </div>
-              <textarea
-                value={clarificationText}
-                onChange={(e) => setClarificationText(e.target.value)}
-                placeholder="Explain actual working hours (e.g., worked from client conference room / VPN after 16:30)..."
-                rows={2}
-                className="w-full p-2 bg-white border border-slate-200 rounded-lg"
-              />
-              <div className="flex items-center gap-2">
-                <input
-                  value={clarificationEvidence}
-                  onChange={(e) => setClarificationEvidence(e.target.value)}
-                  placeholder="Supporting evidence ref (e.g. Jira commit log, VPN session ID)..."
-                  className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-mono"
-                />
+              <div className="flex justify-end gap-2 pt-3 border-t">
                 <button
                   type="button"
-                  onClick={handleSubmitClarification}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg"
+                  onClick={() => setIsScheduleModalOpen(false)}
+                  className="px-3 py-1.5 border rounded-lg text-slate-600 hover:bg-slate-50 font-medium"
                 >
-                  Save Clarification
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold"
+                >
+                  Confirm Schedule
                 </button>
               </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Create Shift */}
+      {isShiftModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-bold text-slate-800 text-sm">Configure Shift</h3>
+              <button onClick={() => setIsShiftModalOpen(false)}>
+                <X size={16} />
+              </button>
             </div>
 
-            {/* Step 2: Internal Manager / HR Final Dispute Resolution */}
-            {(isHR || isMD || (isManager && disputeModalRec.employeeId !== currentUser.employeeId)) && (
-              <div className="p-3.5 rounded-lg border border-slate-200 bg-white space-y-3">
-                <span className="font-bold text-slate-900 block">
-                  Step 2: Authorized Internal Manager / HR Resolution Decision
-                </span>
-
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      'Approve Original Attendance',
-                      'Approve Corrected Attendance',
-                      'Return for Additional Information',
-                      'Reject Attendance Correction'
-                    ] as DisputeResolutionDecision[]
-                  ).map((dec) => (
-                    <button
-                      key={dec}
-                      type="button"
-                      onClick={() => setResolutionDecision(dec)}
-                      className={`p-2 rounded-lg border text-left font-semibold text-[11px] ${
-                        resolutionDecision === dec
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {dec}
-                    </button>
-                  ))}
-                </div>
-
-                {resolutionDecision === 'Approve Corrected Attendance' && (
-                  <div className="grid grid-cols-2 gap-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
-                    <div>
-                      <label className="block text-[10px] font-semibold text-emerald-800 mb-1">Approved Check-In</label>
-                      <input
-                        type="time"
-                        value={resolvedCheckIn}
-                        onChange={(e) => setResolvedCheckIn(e.target.value)}
-                        className="w-full px-2.5 py-1 bg-white border border-emerald-300 rounded font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-semibold text-emerald-800 mb-1">Approved Check-Out</label>
-                      <input
-                        type="time"
-                        value={resolvedCheckOut}
-                        onChange={(e) => setResolvedCheckOut(e.target.value)}
-                        className="w-full px-2.5 py-1 bg-white border border-emerald-300 rounded font-mono"
-                      />
-                    </div>
-                  </div>
-                )}
-
+            <form onSubmit={handleSaveShift} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Mandatory Resolution Decision Reason *</label>
-                  <textarea
-                    value={resolutionReason}
-                    onChange={(e) => setResolutionReason(e.target.value)}
-                    placeholder="Document internal investigation findings and basis for final hours decision..."
-                    rows={2}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg"
+                  <label className="block text-slate-700 font-semibold mb-1">Shift Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={shiftForm.name}
+                    onChange={(e) => setShiftForm({ ...shiftForm, name: e.target.value })}
+                    placeholder="e.g. Afternoon Shift"
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
                   />
                 </div>
-
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDisputeModalRec(null)}
-                    className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700"
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleResolveDispute}
-                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg"
-                  >
-                    Confirm Dispute Resolution
-                  </button>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Shift Code *</label>
+                  <input
+                    type="text"
+                    required
+                    value={shiftForm.code}
+                    onChange={(e) => setShiftForm({ ...shiftForm, code: e.target.value })}
+                    placeholder="e.g. AFT-01"
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
+                  />
                 </div>
               </div>
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* Modal 4: Stage 2 Company Final Approval (Section 8) */}
-      {companyApprovalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4 text-xs">
-            <h4 className="text-base font-bold text-slate-900">
-              Stage 2: Internal Company Attendance Approval ({companyApprovalModal.rec.employeeId} · {companyApprovalModal.rec.date})
-            </h4>
-            <p className="text-slate-600">
-              Client verification never automatically approves company attendance. Only internal Manager/HR approval makes this record eligible for payroll processing.
-            </p>
-
-            {companyApprovalModal.error && (
-              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700">
-                {companyApprovalModal.error}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Start Time *</label>
+                  <input
+                    type="time"
+                    required
+                    value={shiftForm.startTime}
+                    onChange={(e) => setShiftForm({ ...shiftForm, startTime: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">End Time *</label>
+                  <input
+                    type="time"
+                    required
+                    value={shiftForm.endTime}
+                    onChange={(e) => setShiftForm({ ...shiftForm, endTime: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
+                  />
+                </div>
               </div>
-            )}
 
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Company Approval Decision</label>
-              <select
-                value={companyApprovalModal.decision}
-                onChange={(e) =>
-                  setCompanyApprovalModal({
-                    ...companyApprovalModal,
-                    decision: e.target.value as any
-                  })
-                }
-                className="w-full px-3 py-1.5 border border-slate-200 rounded-lg font-semibold"
-              >
-                <option value="Approved">Approved (Eligible for Draft Payroll)</option>
-                <option value="Returned for Correction">Returned for Correction</option>
-                <option value="Rejected">Rejected (Not Payable)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Approver Remarks</label>
-              <textarea
-                value={companyApprovalModal.comments}
-                onChange={(e) => setCompanyApprovalModal({ ...companyApprovalModal, comments: e.target.value })}
-                rows={2}
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setCompanyApprovalModal(null)}
-                className="px-3 py-1.5 text-slate-700 border border-slate-200 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCompanyApprovalSubmit}
-                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg"
-              >
-                Confirm Company Decision
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add/Edit Shift Modal */}
-      {isShiftModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <form
-            onSubmit={handleSaveShift}
-            className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-3 text-xs"
-          >
-            <h4 className="text-base font-bold text-slate-900">
-              {editingShift ? 'Edit Shift Definition' : 'Add Shift Definition'}
-            </h4>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="col-span-2 font-semibold text-slate-700">
-                Shift Name *
-                <input
-                  required
-                  value={shiftForm.name}
-                  onChange={(e) => setShiftForm({ ...shiftForm, name: e.target.value })}
-                  className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                />
-              </label>
-              <label className="font-semibold text-slate-700">
-                Shift Code *
-                <input
-                  required
-                  value={shiftForm.code}
-                  onChange={(e) => setShiftForm({ ...shiftForm, code: e.target.value })}
-                  className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg font-mono uppercase"
-                />
-              </label>
-              <label className="font-semibold text-slate-700">
-                Grace Period (mins)
-                <input
-                  type="number"
-                  value={shiftForm.gracePeriodMinutes}
-                  onChange={(e) => setShiftForm({ ...shiftForm, gracePeriodMinutes: Number(e.target.value) })}
-                  className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                />
-              </label>
-              <label className="font-semibold text-slate-700">
-                Start Time
-                <input
-                  type="time"
-                  value={shiftForm.startTime}
-                  onChange={(e) => setShiftForm({ ...shiftForm, startTime: e.target.value })}
-                  className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                />
-              </label>
-              <label className="font-semibold text-slate-700">
-                End Time
-                <input
-                  type="time"
-                  value={shiftForm.endTime}
-                  onChange={(e) => setShiftForm({ ...shiftForm, endTime: e.target.value })}
-                  className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                />
-              </label>
-              <label className="font-semibold text-slate-700">
-                Working Hours
-                <input
-                  type="number"
-                  value={shiftForm.totalWorkingHours}
-                  onChange={(e) => setShiftForm({ ...shiftForm, totalWorkingHours: Number(e.target.value) })}
-                  className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                />
-              </label>
-              <label className="font-semibold text-slate-700">
-                Break (mins)
-                <input
-                  type="number"
-                  value={shiftForm.breakDurationMinutes}
-                  onChange={(e) => setShiftForm({ ...shiftForm, breakDurationMinutes: Number(e.target.value) })}
-                  className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg"
-                />
-              </label>
-            </div>
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setIsShiftModalOpen(false)}
-                className="px-3 py-1.5 text-slate-700 border border-slate-200 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg"
-              >
-                Save Shift
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Correction Decision Modal */}
-      {reviewCorr && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4 text-xs">
-            <h4 className="text-base font-bold text-slate-900">
-              {reviewCorr.decision === 'Approved' ? 'Approve Attendance Correction' : 'Reject Attendance Correction'}
-            </h4>
-            <p className="text-slate-600">
-              Approved corrections update the attendance record while preserving the original timestamps and audit history.
-            </p>
-            {reviewCorrError && (
-              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 font-medium">
-                {reviewCorrError}
+              <div className="flex justify-end gap-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setIsShiftModalOpen(false)}
+                  className="px-3 py-1.5 border rounded-lg text-slate-600 hover:bg-slate-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold"
+                >
+                  Save Shift
+                </button>
               </div>
-            )}
-            <textarea
-              value={reviewComments}
-              onChange={(e) => setReviewComments(e.target.value)}
-              placeholder="e.g. Verified client email confirmation and shift logs..."
-              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg"
-              rows={3}
-            />
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setReviewCorr(null)}
-                className="px-3 py-1.5 text-slate-700 bg-white border border-slate-200 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCorrectionDecision}
-                className={`px-4 py-1.5 font-semibold text-white rounded-lg ${
-                  reviewCorr.decision === 'Approved' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
-                }`}
-              >
-                Confirm {reviewCorr.decision}
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Request Correction / Manual Entry Modal */}
-      <RequestCorrectionModal
-        isOpen={isCorrectionModalOpen}
-        onClose={() => setIsCorrectionModalOpen(false)}
-        defaultEntryType={correctionModalType}
-      />
+      {/* Modal: Request Overtime */}
+      {isOvertimeModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-bold text-slate-800 text-sm">Submit Overtime Request</h3>
+              <button onClick={() => setIsOvertimeModalOpen(false)}>
+                <X size={16} />
+              </button>
+            </div>
 
-      {/* Bulk CSV Import Attendance */}
-      <CsvImportModal<AttendanceRecord>
-        isOpen={isImportOpen}
-        onClose={() => setIsImportOpen(false)}
-        title="Bulk Import Attendance Punches"
-        description="Import biometric or external attendance punches by Employee ID and Date."
-        templateFileName="Orbyx_Attendance_Import_Template"
-        headers={['EmployeeID', 'Date', 'CheckIn', 'CheckOut', 'HoursWorked', 'Status']}
-        sampleRows={[
-          ['EMP-003', '2026-10-26', '09:32', '18:40', '9.1', 'Present']
-        ]}
-        validateRow={(cols, idx) => {
-          const [employeeId, date, checkInTime, checkOutTime, totalHoursWorked, status] = cols;
-          if (!employeeId || !date) {
-            return { valid: false, error: 'EmployeeID and Date are required' };
-          }
-          if (!employees.some((e) => e.id === employeeId)) {
-            return { valid: false, error: `Employee ID "${employeeId}" not found` };
-          }
-          const hrs = Number(totalHoursWorked) || 8;
-          return {
-            valid: true,
-            data: {
-              id: `ATT-IMP-${Date.now()}-${idx}`,
-              employeeId,
-              date,
-              shiftId: 'SHF-GEN',
-              checkInTime: checkInTime || '09:30',
-              checkOutTime: checkOutTime || '18:30',
-              totalHoursWorked: hrs,
-              regularHours: Math.min(8, hrs),
-              overtimeHours: hrs > 8 ? Number((hrs - 8).toFixed(1)) : 0,
-              status: (status as any) || 'Present',
-              isLate: status === 'Late',
-              lateMinutes: status === 'Late' ? 20 : 0,
-              isEarlyDeparture: false,
-              source: 'Biometric Import',
-              clientVerificationStatus: 'Not Required',
-              companyApprovalStatus: 'Approved',
-              payrollEligibilityStatus: 'Eligible for Draft Payroll'
-            }
-          };
-        }}
-        onCommit={(validItems) => {
-          validItems.forEach((rec) => db.saveAttendanceRecord(rec));
-        }}
-      />
+            <form onSubmit={handleSubmitOvertime} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Date *</label>
+                <input
+                  type="date"
+                  required
+                  value={overtimeForm.attendanceDate}
+                  onChange={(e) => setOvertimeForm({ ...overtimeForm, attendanceDate: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Actual Hours *</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={overtimeForm.actualHours}
+                    onChange={(e) => {
+                      const actual = Number(e.target.value);
+                      setOvertimeForm({
+                        ...overtimeForm,
+                        actualHours: actual,
+                        overtimeHours: Math.max(0, +(actual - overtimeForm.standardHours).toFixed(2))
+                      });
+                    }}
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Overtime Hours</label>
+                  <input
+                    type="number"
+                    readOnly
+                    value={overtimeForm.overtimeHours}
+                    className="w-full px-3 py-2 border rounded-lg text-xs bg-slate-50 font-bold text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Reason for Overtime *</label>
+                <textarea
+                  rows={2}
+                  required
+                  value={overtimeForm.overtimeReason}
+                  onChange={(e) => setOvertimeForm({ ...overtimeForm, overtimeReason: e.target.value })}
+                  placeholder="Explain why overtime was performed..."
+                  className="w-full px-3 py-2 border rounded-lg text-xs"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setIsOvertimeModalOpen(false)}
+                  className="px-3 py-1.5 border rounded-lg text-slate-600 hover:bg-slate-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold"
+                >
+                  Submit Overtime
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
-

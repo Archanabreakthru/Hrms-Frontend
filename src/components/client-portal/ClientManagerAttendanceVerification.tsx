@@ -191,6 +191,7 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
 
   // Open Rejection Modal for Single Day
   const handleOpenRejectSingleDay = (day: ClientAttendanceDay) => {
+    if (!currentEmployee) return;
     setRejectModal({
       isOpen: true,
       mode: 'single',
