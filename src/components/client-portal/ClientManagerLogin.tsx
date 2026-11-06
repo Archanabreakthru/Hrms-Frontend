@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Building2, Eye, EyeOff, Lock, Mail, ArrowRight, ShieldCheck, Info } from 'lucide-react';
 import { ClientManagerProfile, DEFAULT_CLIENT_MANAGER } from './mockClientData';
+import { clientAttendanceIntegration } from '../clients/clientAttendanceIntegration';
 
 interface ClientManagerLoginProps {
   onLoginSuccess: (manager: ClientManagerProfile) => void;
@@ -29,25 +30,46 @@ export const ClientManagerLogin: React.FC<ClientManagerLoginProps> = ({
 
     setLoading(true);
 
-    // Mock authentication with realistic delay
+    // Dynamic supervisor identity mapping from shared in-memory integration state
     setTimeout(() => {
       setLoading(false);
-      // Validate mock credentials or allow default credentials
-      if (email.toLowerCase().includes('acme') || email.toLowerCase().includes('client') || email.toLowerCase().includes('rohit')) {
+      const cleanEmail = email.trim().toLowerCase();
+      const matchedSup = clientAttendanceIntegration.getSupervisorByEmail(cleanEmail);
+
+      if (matchedSup) {
+        if (matchedSup.status === 'Inactive' || matchedSup.invitationStatus === 'Revoked') {
+          setErrorMsg(`Access Denied: Supervisor account (${matchedSup.name}) has been deactivated by HR.`);
+          return;
+        }
+        if (matchedSup.invitationStatus === 'Expired') {
+          setErrorMsg(`Access Denied: Invitation token for ${matchedSup.name} has expired. Please contact HR.`);
+          return;
+        }
+
+        const client = clientAttendanceIntegration.getClientById(matchedSup.clientId);
         const profile: ClientManagerProfile = {
-          ...DEFAULT_CLIENT_MANAGER,
-          email: email.trim()
+          id: matchedSup.id,
+          supervisorId: matchedSup.id,
+          clientId: matchedSup.clientId,
+          name: matchedSup.name,
+          email: matchedSup.officialEmail,
+          roleTitle: 'Client Manager',
+          companyName: client?.name || matchedSup.clientName,
+          avatarInitials: matchedSup.name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase()
         };
         onLoginSuccess(profile);
       } else {
-        // Still allow prototype sign in with entered details
+        // Fallback for prototype login with entered details
+        const defaultClient = clientAttendanceIntegration.getClients()[0];
         const profile: ClientManagerProfile = {
-          id: 'CM-002',
-          name: email.split('@')[0].replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-          email: email.trim(),
+          id: 'CSUP-DEMO',
+          supervisorId: 'CSUP-105',
+          clientId: defaultClient?.id || 'CLI-103',
+          name: cleanEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+          email: cleanEmail,
           roleTitle: 'Client Manager',
-          companyName: 'Acme Technologies Pvt. Ltd.',
-          avatarInitials: email.substring(0, 2).toUpperCase()
+          companyName: defaultClient?.name || 'Acme Technologies Pvt. Ltd.',
+          avatarInitials: cleanEmail.substring(0, 2).toUpperCase()
         };
         onLoginSuccess(profile);
       }

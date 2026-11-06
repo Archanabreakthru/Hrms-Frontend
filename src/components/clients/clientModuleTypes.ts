@@ -26,6 +26,7 @@ export interface ClientRecord {
   contactNumber?: string;
   address: string;
   designatedSupervisor?: string;
+  designatedSupervisorId?: string;
   supervisorEmail?: string;
   contractStart?: string;
   contractEnd?: string;

@@ -1,6 +1,6 @@
 // Orbyx HRMS - Client Manager Attendance Verification UI
 // Single-page interface matching the exact design specification
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Users,
   CheckCircle2,
@@ -27,6 +27,7 @@ import {
   REPORTING_PERIODS,
   INITIAL_CLIENT_EMPLOYEES
 } from './mockClientData';
+import { clientAttendanceIntegration } from '../clients/clientAttendanceIntegration';
 
 interface ClientManagerAttendanceVerificationProps {
   manager: ClientManagerProfile;
@@ -39,18 +40,142 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
   onLogout,
   onReturnToHRMS
 }) => {
-  // State for employees list and their individual daily records
-  const [employees, setEmployees] = useState<ClientDeployedEmployee[]>(() => {
-    try {
-      const stored = localStorage.getItem('orbyx_client_manager_employees');
-      if (stored) {
-        return JSON.parse(stored);
+  // Sync tick for reactive integration store subscriptions
+  const [, setSyncTick] = useState(0);
+
+  // Compute live scoped employees & attendance days from clientAttendanceIntegration
+  const buildScopedEmployees = useCallback((): ClientDeployedEmployee[] => {
+    // 1. Resolve supervisor and client organizations
+    const targetSupervisorId = manager.supervisorId || manager.id;
+    const targetClientId = manager.clientId;
+
+    // 2. Retrieve deployments assigned to this client and supervisor
+    const allDeployments = clientAttendanceIntegration.getDeployments();
+    const clientDeployments = allDeployments.filter((d) => {
+      if (targetClientId && d.clientId !== targetClientId) return false;
+      if (targetSupervisorId && d.clientSupervisorId && d.clientSupervisorId !== targetSupervisorId) {
+        // If assigned specifically to another supervisor under the same client, filter out
+        return false;
       }
-    } catch {
-      // ignore parse err
+      return true;
+    });
+
+    // 3. Retrieve verifications for this supervisor / client
+    const allVerifs = clientAttendanceIntegration.getVerifications();
+    const scopedVerifs = allVerifs.filter((v) => {
+      if (targetClientId && v.clientId !== targetClientId) return false;
+      if (targetSupervisorId && v.supervisorId && v.supervisorId !== targetSupervisorId) {
+        return false;
+      }
+      return true;
+    });
+
+    // If no deployments or verifications exist for this supervisor yet, fallback to default seed employees
+    if (clientDeployments.length === 0 && scopedVerifs.length === 0) {
+      return INITIAL_CLIENT_EMPLOYEES;
     }
-    return INITIAL_CLIENT_EMPLOYEES;
-  });
+
+    // Map each deployed employee
+    const employeeMap = new Map<string, ClientDeployedEmployee>();
+
+    // Seed from deployments
+    clientDeployments.forEach((dep) => {
+      if (!employeeMap.has(dep.employeeId)) {
+        const initials = (dep.employeeName || dep.employeeId)
+          .split(' ')
+          .map((n) => n[0])
+          .join('')
+          .substring(0, 2)
+          .toUpperCase();
+
+        employeeMap.set(dep.employeeId, {
+          id: dep.employeeId,
+          name: dep.employeeName || dep.employeeId,
+          initials,
+          avatarBgColor: 'bg-indigo-100 text-indigo-700',
+          role: dep.project || 'Deployed Specialist',
+          status: 'Pending',
+          period: 'Mar 01 - 15, 2025',
+          records: []
+        });
+      }
+    });
+
+    // Add verification records
+    scopedVerifs.forEach((v) => {
+      let emp = employeeMap.get(v.employeeId);
+      if (!emp) {
+        const initials = v.employeeName
+          .split(' ')
+          .map((n) => n[0])
+          .join('')
+          .substring(0, 2)
+          .toUpperCase();
+
+        emp = {
+          id: v.employeeId,
+          name: v.employeeName,
+          initials,
+          avatarBgColor: 'bg-purple-100 text-purple-700',
+          role: v.shiftName || 'Client Deployed Specialist',
+          status: 'Pending',
+          period: 'Mar 01 - 15, 2025',
+          records: []
+        };
+        employeeMap.set(v.employeeId, emp);
+      }
+
+      const dayStatus: 'Verified' | 'Pending' | 'Rejected' =
+        v.verificationStatus === 'Client Approved' ||
+        v.verificationStatus === 'Pending HR Verification' ||
+        v.verificationStatus === 'HR Approved'
+          ? 'Verified'
+          : v.verificationStatus === 'Client Rejected' || v.verificationStatus === 'HR Rejected'
+          ? 'Rejected'
+          : 'Pending';
+
+      emp.records.push({
+        id: v.id, // Linked directly to verification record ID
+        date: v.attendanceDate,
+        displayDate: `${v.attendanceDate} (${v.shiftName.split(' ')[0] || 'Shift'})`,
+        attendance: 'Present',
+        workingHours: `${v.workingHours} hrs`,
+        status: dayStatus,
+        rejectionReason: v.supervisorRemarks
+      });
+    });
+
+    // Recompute overall status for each employee
+    const result: ClientDeployedEmployee[] = [];
+    employeeMap.forEach((emp) => {
+      if (emp.records.length > 0) {
+        if (emp.records.some((r) => r.status === 'Rejected')) {
+          emp.status = 'Rejected';
+        } else if (emp.records.some((r) => r.status === 'Pending')) {
+          emp.status = 'Pending';
+        } else {
+          emp.status = 'Verified';
+        }
+      } else {
+        emp.status = 'Verified';
+      }
+      result.push(emp);
+    });
+
+    return result.length > 0 ? result : INITIAL_CLIENT_EMPLOYEES;
+  }, [manager]);
+
+  // State for employees list and their individual daily records
+  const [employees, setEmployees] = useState<ClientDeployedEmployee[]>(() => buildScopedEmployees());
+
+  // Subscribe to changes in clientAttendanceIntegration
+  useEffect(() => {
+    const unsubscribe = clientAttendanceIntegration.subscribe(() => {
+      setEmployees(buildScopedEmployees());
+      setSyncTick((t) => t + 1);
+    });
+    return unsubscribe;
+  }, [buildScopedEmployees]);
 
   // Selected reporting period
   const [selectedPeriod, setSelectedPeriod] = useState<string>(REPORTING_PERIODS[0].id);
@@ -170,6 +295,14 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
   const handleAcceptSingleDay = (dayId: string) => {
     if (!currentEmployee) return;
 
+    // Synchronize to shared in-memory integration store
+    clientAttendanceIntegration.handleClientSupervisorDecision(
+      dayId,
+      'Approved',
+      'Verified in Client Supervisor Portal',
+      manager.name
+    );
+
     const updatedEmployees = employees.map((emp) => {
       if (emp.id !== currentEmployee.id) return emp;
       const updatedRecords = emp.records.map((r) => {
@@ -230,6 +363,14 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
     if (!currentEmployee) return;
 
     if (rejectModal.mode === 'single' && rejectModal.recordId) {
+      // Synchronize single rejection to shared integration store
+      clientAttendanceIntegration.handleClientSupervisorDecision(
+        rejectModal.recordId,
+        'Rejected',
+        rejectionReasonInput.trim(),
+        manager.name
+      );
+
       const updatedEmployees = employees.map((emp) => {
         if (emp.id !== currentEmployee.id) return emp;
         const updatedRecords = emp.records.map((r) => {
@@ -253,6 +394,17 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
       showToast(`Record marked Rejected with reason.`);
     } else if (rejectModal.mode === 'bulk') {
       // Bulk reject only pending records
+      currentEmployee.records
+        .filter((r) => r.status === 'Pending')
+        .forEach((r) => {
+          clientAttendanceIntegration.handleClientSupervisorDecision(
+            r.id,
+            'Rejected',
+            rejectionReasonInput.trim(),
+            manager.name
+          );
+        });
+
       const updatedEmployees = employees.map((emp) => {
         if (emp.id !== currentEmployee.id) return emp;
         const updatedRecords = emp.records.map((r) => {
@@ -288,6 +440,16 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
       showToast('All records for this employee are already verified.');
       return;
     }
+
+    // Synchronize bulk approvals to shared integration store
+    pendingRecords.forEach((r) => {
+      clientAttendanceIntegration.handleClientSupervisorDecision(
+        r.id,
+        'Approved',
+        'Bulk verified in Client Supervisor Portal',
+        manager.name
+      );
+    });
 
     const updatedEmployees = employees.map((emp) => {
       if (emp.id !== currentEmployee.id) return emp;

@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { PersonaSwitcher } from './PersonaSwitcher';
+import React from 'react';
+import { UserProfileDropdown } from './UserProfileDropdown';
 import { NotificationDropdown } from './NotificationDropdown';
-import { useAuth } from '../../services/authContext';
-import { db, subscribeToDB } from '../../db/storage';
-import { CheckCircle2, Clock, ShieldCheck, ExternalLink } from 'lucide-react';
+import { GlobalAttendanceAction } from '../attendance/GlobalAttendanceAction';
+import { ExternalLink } from 'lucide-react';
 import { NavTab } from './Sidebar';
 
 interface HeaderProps {
@@ -12,28 +11,6 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate }) => {
-  const { currentUser } = useAuth();
-  const [todayRecord, setTodayRecord] = useState(() => {
-    const today = new Date().toISOString().split('T')[0];
-    return db.getAttendanceRecords().find(
-      (r) => r.employeeId === currentUser.employeeId && r.date === today
-    );
-  });
-
-  useEffect(() => {
-    const update = () => {
-      const today = new Date().toISOString().split('T')[0];
-      setTodayRecord(
-        db.getAttendanceRecords().find(
-          (r) => r.employeeId === currentUser.employeeId && r.date === today
-        )
-      );
-    };
-    const unsubscribe = subscribeToDB(update);
-    update();
-    return unsubscribe;
-  }, [currentUser]);
-
   const titles: Record<NavTab, { title: string; subtitle: string }> = {
     dashboard: { title: 'Executive Overview', subtitle: 'Workforce operational metrics and daily status' },
     organization: { title: 'Organization Setup', subtitle: 'Legal entity, branches, departments, designations & governance structure' },
@@ -51,61 +28,21 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate }) => {
   };
 
   const currentMeta = titles[currentTab] || { title: 'Dashboard', subtitle: 'HRMS' };
-  const isMD = currentUser.role === 'senior_manager';
 
   return (
-    <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
-      <div>
+    <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between shrink-0 gap-3">
+      <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <h1 className="text-base font-bold text-slate-900 tracking-tight">{currentMeta.title}</h1>
+          <h1 className="text-base font-bold text-slate-900 tracking-tight truncate">{currentMeta.title}</h1>
         </div>
-        <p className="text-[11px] text-slate-500 hidden sm:block">{currentMeta.subtitle}</p>
+        <p className="text-[11px] text-slate-500 hidden sm:block truncate">{currentMeta.subtitle}</p>
       </div>
 
-      <div className="flex items-center gap-3">
-        {/* Non-duplicating Attendance Status Indicator (Single Check-In/Out control lives in Attendance & Shifts) */}
-        <div className="hidden md:flex items-center gap-2 pr-3 border-r border-slate-200">
-          {isMD ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>MD Executive Oversight</span>
-            </span>
-          ) : !todayRecord?.checkInTime ? (
-            <button
-              type="button"
-              onClick={() => onNavigate?.('attendance')}
-              title="Open Attendance & Shifts to Check In"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-medium transition-colors"
-            >
-              <Clock className="h-3.5 w-3.5 text-amber-600" />
-              <span>Status: Not Checked In</span>
-            </button>
-          ) : !todayRecord?.checkOutTime ? (
-            <button
-              type="button"
-              onClick={() => onNavigate?.('attendance')}
-              title="Open Attendance & Shifts to Check Out"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-medium transition-colors"
-            >
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Checked In ({todayRecord.checkInTime})</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onNavigate?.('attendance')}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-mono transition-colors"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-              <span>Shift Logged ({todayRecord.totalHoursWorked}h)</span>
-            </button>
-          )}
-        </div>
-
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* External Client Manager Portal Access Button */}
         <a
           href="#client-portal/login"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-xs font-semibold transition-all shadow-2xs"
+          className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-xs font-semibold transition-all shadow-2xs"
           title="Open Client Manager Attendance Verification Portal"
         >
           <ExternalLink className="h-3.5 w-3.5 text-purple-600" />
@@ -114,11 +51,14 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate }) => {
           <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-200 text-purple-900">Preview</span>
         </a>
 
+        {/* Global Attendance Check-in / Check-out Component */}
+        <GlobalAttendanceAction />
+
         {/* Notifications Dropdown */}
         <NotificationDropdown />
 
-        {/* Persona Switcher Dropdown */}
-        <PersonaSwitcher />
+        {/* Authenticated User Profile & Logout Dropdown (Replaces PersonaSwitcher) */}
+        <UserProfileDropdown />
       </div>
     </header>
   );

@@ -7,7 +7,7 @@
 // 3. HR Workforce Interface vs Employee Self-Service Interface
 // 4. In-Memory Session State only (No Database, No Backend, Clean Empty States)
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Clock,
   Calendar,
@@ -47,6 +47,8 @@ import {
 } from './attendanceModuleTypes';
 import { EmployeeCorrectionModal } from './EmployeeCorrectionModal';
 import { HRManualEntryModal } from './HRManualEntryModal';
+import { clientAttendanceIntegration } from '../clients/clientAttendanceIntegration';
+import { db, subscribeToDB } from '../../db/storage';
 
 interface AttendanceManagementProps {
   navContext?: any;
@@ -140,9 +142,65 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
   ]);
 
   const [schedules, setSchedules] = useState<ShiftScheduleEntry[]>([]);
-  const [attendanceRecords, setAttendanceRecords] = useState<DailyAttendanceRecord[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<DailyAttendanceRecord[]>(() => {
+    return db.getAttendanceRecords().map((r) => ({
+      id: r.id,
+      employeeId: r.employeeId,
+      employeeName: (db.getEmployeeById(r.employeeId)?.firstName ? `${db.getEmployeeById(r.employeeId)?.firstName} ${db.getEmployeeById(r.employeeId)?.lastName}` : r.employeeId),
+      date: r.date,
+      shiftId: r.shiftId || 'SHIFT-GEN',
+      shiftName: 'General Day Shift (09:30 - 18:30)',
+      checkInTime: r.checkInTime,
+      checkOutTime: r.checkOutTime,
+      totalHours: r.totalHoursWorked || 0,
+      netWorkingHours: r.totalHoursWorked || 0,
+      breakDurationMinutes: 60,
+      overtimeHours: r.overtimeHours || 0,
+      isLate: Boolean(r.isLate),
+      lateMinutes: r.lateMinutes || 0,
+      isEarlyDeparture: Boolean(r.isEarlyDeparture),
+      isMissingPunch: Boolean(r.checkInTime && !r.checkOutTime),
+      status: (r.status as AttendancePunchStatus) || 'Present',
+      workLocationType: (r.workMode === 'Client Site' ? 'Client Site' : r.workMode === 'Remote' ? 'Remote' : 'Office') as 'Client Site' | 'Remote' | 'Office',
+      source: 'Web Punch'
+    }));
+  });
   const [corrections, setCorrections] = useState<AttendanceCorrectionEntry[]>([]);
   const [overtimeEntries, setOvertimeEntries] = useState<OvertimeEntry[]>([]);
+
+  // Synchronize attendance records from storage & integration layer
+  useEffect(() => {
+    const syncAttendance = () => {
+      const dbRecs: DailyAttendanceRecord[] = db.getAttendanceRecords().map((r) => ({
+        id: r.id,
+        employeeId: r.employeeId,
+        employeeName: (db.getEmployeeById(r.employeeId)?.firstName ? `${db.getEmployeeById(r.employeeId)?.firstName} ${db.getEmployeeById(r.employeeId)?.lastName}` : r.employeeId),
+        date: r.date,
+        shiftId: r.shiftId || 'SHIFT-GEN',
+        shiftName: 'General Day Shift (09:30 - 18:30)',
+        checkInTime: r.checkInTime,
+        checkOutTime: r.checkOutTime,
+        totalHours: r.totalHoursWorked || 0,
+        netWorkingHours: r.totalHoursWorked || 0,
+        breakDurationMinutes: 60,
+        overtimeHours: r.overtimeHours || 0,
+        isLate: Boolean(r.isLate),
+        lateMinutes: r.lateMinutes || 0,
+        isEarlyDeparture: Boolean(r.isEarlyDeparture),
+        isMissingPunch: Boolean(r.checkInTime && !r.checkOutTime),
+        status: (r.status as AttendancePunchStatus) || 'Present',
+        workLocationType: (r.workMode === 'Client Site' ? 'Client Site' : r.workMode === 'Remote' ? 'Remote' : 'Office') as 'Client Site' | 'Remote' | 'Office',
+        source: 'Web Punch'
+      }));
+      setAttendanceRecords(dbRecs);
+    };
+    const unsubDB = subscribeToDB(syncAttendance);
+    const unsubInteg = clientAttendanceIntegration.subscribe(syncAttendance);
+    return () => {
+      unsubDB();
+      unsubInteg();
+    };
+  }, []);
 
   // HR Manual Entries Log
   const [hrManualAuditLogs, setHrManualAuditLogs] = useState<
@@ -392,6 +450,15 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
           (r) => !(r.date === corr.attendanceDate && r.employeeId === corr.employeeId)
         )
       ]);
+
+      // Reopen client verification if this attendance was tied to a client deployment
+      clientAttendanceIntegration.reopenVerificationOnCorrection(
+        updatedRecord.id,
+        corr.requestedCheckIn,
+        corr.requestedCheckOut,
+        corr.calculatedHours,
+        corr.reasonRemarks || corr.reasonCategory
+      );
     }
 
     showToast(
@@ -618,50 +685,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
 
           {/* Right Action Buttons */}
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Work Location Mode Select (when not checked in) */}
-            {!myTodayRecord?.checkInTime && (
-              <select
-                value={punchWorkMode}
-                onChange={(e) => setPunchWorkMode(e.target.value as any)}
-                className="px-2.5 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-hidden"
-              >
-                <option value="Office">Office Location</option>
-                <option value="Client Site">Client Site</option>
-                <option value="Remote">Remote</option>
-              </select>
-            )}
-
-            {/* STATE 1: NOT CHECKED IN -> Record Check-In Button */}
-            {!myTodayRecord?.checkInTime ? (
-              <button
-                onClick={handleCheckIn}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
-              >
-                <LogIn className="h-4 w-4" />
-                <span>Record Check-In</span>
-              </button>
-            ) : !myTodayRecord?.checkOutTime ? (
-              /* STATE 2: CHECKED IN -> Record Check-Out Button */
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-700 font-medium">
-                  In at <span className="font-mono font-bold text-slate-900">{myTodayRecord.checkInTime}</span>
-                </span>
-                <button
-                  onClick={handleCheckOut}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  <span>Record Check-Out</span>
-                </button>
-              </div>
-            ) : (
-              /* STATE 3: CHECKED OUT -> Complete status summary, buttons hidden */
-              <span className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <span>Today's Shift Complete ({myTodayRecord.netWorkingHours} hrs)</span>
-              </span>
-            )}
-
             {/* ACTION C: HR ONLY OUTAGE / MANUAL ENTRY BUTTON */}
             {isHR && (
               <button

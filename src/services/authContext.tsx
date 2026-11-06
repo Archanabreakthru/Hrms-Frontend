@@ -1,14 +1,21 @@
 // Orbyx HRMS Auth Context - strictly typed role-based access
+// Updated for Individual User Login & Development Session Management
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { CurrentUser, UserRole, Employee } from '../types/hrms';
+import { CurrentUser, Employee } from '../types/hrms';
 import { personaUsers } from '../db/initialData';
 import { db, initDatabase, subscribeToDB } from '../db/storage';
+import { validateDevCredentials } from './devCredentials';
+
+export const ORBYX_SESSION_KEY = 'orbyx_hrms_authenticated_user_id';
 
 interface AuthContextType {
   currentUser: CurrentUser;
-  currentEmployee?: Employee;
-  switchPersona: (userId: string) => void;
+  currentEmployee?: Employee | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
   allPersonas: CurrentUser[];
+  login: (usernameOrEmail: string, passwordInput: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
   canAccessModule: (module: 'hr' | 'organization' | 'clients' | 'service_records' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings') => boolean;
   canViewConfidentialSalary: (targetEmployeeId: string) => boolean;
   canManageOrganization: () => boolean;
@@ -37,14 +44,22 @@ function enrichPersonaWithLiveEmployee(persona: CurrentUser): CurrentUser {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [selectedUserId, setSelectedUserId] = useState<string>(() => {
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(() => {
     initDatabase();
-    const savedUserId = localStorage.getItem('orbyx_hrms_current_user_id');
-    const found = personaUsers.find((p) => p.id === savedUserId);
-    const defaultUser = personaUsers.find((p) => p.id === 'user_hr_admin') || personaUsers[0];
-    return (found || defaultUser).id;
+    // Validate stored development session on application startup
+    const savedUserId = localStorage.getItem(ORBYX_SESSION_KEY);
+    if (!savedUserId) return null; // No default user!
+
+    // Verify stored user exists in canonical user definitions
+    const exists = personaUsers.find((p) => p.id === savedUserId);
+    if (!exists) {
+      localStorage.removeItem(ORBYX_SESSION_KEY);
+      return null;
+    }
+    return exists.id;
   });
 
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [dbTick, setDbTick] = useState(0);
 
   useEffect(() => {
@@ -59,39 +74,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [dbTick]);
 
   const currentUser = useMemo(() => {
+    if (!selectedUserId) {
+      // Provide a fallback reference so internal components don't crash before login mounts
+      return allPersonas[0];
+    }
     return allPersonas.find((p) => p.id === selectedUserId) || allPersonas[0];
   }, [allPersonas, selectedUserId]);
 
   const currentEmployee = useMemo(() => {
     void dbTick;
-    return db.getEmployeeById(currentUser.employeeId);
-  }, [currentUser.employeeId, dbTick]);
+    if (!currentUser) return null;
+    return db.getEmployeeById(currentUser.employeeId) || null;
+  }, [currentUser, dbTick]);
 
-  const switchPersona = (userId: string) => {
-    const target = personaUsers.find((p) => p.id === userId);
-    if (!target) return;
-    // Block any non-internal or client-related role/account per Section 3
-    const roleLower = String(target.role).toLowerCase();
-    if (roleLower.includes('client') || roleLower.includes('external')) {
-      return;
+  // True only when a valid session token is established in state
+  const isAuthenticated = selectedUserId !== null;
+
+  // Authenticate using individual temporary credentials
+  const login = async (
+    usernameOrEmail: string,
+    passwordInput: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    setIsLoading(true);
+
+    try {
+      // Small simulated async delay for natural UI feel
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const validation = validateDevCredentials(usernameOrEmail, passwordInput);
+      if (!validation.success || !validation.userId) {
+        return { success: false, error: validation.error || 'Authentication failed.' };
+      }
+
+      const target = personaUsers.find((p) => p.id === validation.userId);
+      if (!target) {
+        return { success: false, error: 'User identity record not found in system.' };
+      }
+
+      // Validate account status from live employee roster
+      const emp = db.getEmployeeById(target.employeeId);
+      if (emp && emp.status !== 'Active') {
+        return {
+          success: false,
+          error: `Account for ${target.name} is currently ${emp.status}. Access denied.`
+        };
+      }
+
+      setSelectedUserId(target.id);
+      localStorage.setItem(ORBYX_SESSION_KEY, target.id);
+
+      const enriched = enrichPersonaWithLiveEmployee(target);
+      db.logAudit({
+        actorUserId: enriched.id,
+        actorName: enriched.name,
+        actorRole: enriched.role,
+        action: 'LOGIN',
+        module: 'SYSTEM',
+        entityId: enriched.id,
+        entityName: enriched.name,
+        description: `Individual development login successful for ${enriched.name} (${enriched.role})`
+      });
+
+      return { success: true };
+    } finally {
+      setIsLoading(false);
     }
-    setSelectedUserId(target.id);
-    localStorage.setItem('orbyx_hrms_current_user_id', target.id);
-    const enriched = enrichPersonaWithLiveEmployee(target);
-    db.logAudit({
-      actorUserId: enriched.id,
-      actorName: enriched.name,
-      actorRole: enriched.role,
-      action: 'LOGIN',
-      module: 'SYSTEM',
-      entityId: enriched.id,
-      entityName: enriched.name,
-      description: `Switched active session to internal persona ${enriched.name} (${enriched.role})`
-    });
+  };
+
+  // Secure logout handler
+  const logout = () => {
+    if (selectedUserId) {
+      const activeUser = allPersonas.find((p) => p.id === selectedUserId);
+      if (activeUser) {
+        db.logAudit({
+          actorUserId: activeUser.id,
+          actorName: activeUser.name,
+          actorRole: activeUser.role,
+          action: 'LOGIN',
+          module: 'SYSTEM',
+          entityId: activeUser.id,
+          entityName: activeUser.name,
+          description: `User ${activeUser.name} signed out.`
+        });
+      }
+    }
+
+    setSelectedUserId(null);
+    localStorage.removeItem(ORBYX_SESSION_KEY);
   };
 
   // Module Access checks (Strictly internal Orbyx roles only)
-  const canAccessModule = (module: 'hr' | 'organization' | 'clients' | 'service_records' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings'): boolean => {
+  const canAccessModule = (
+    module: 'hr' | 'organization' | 'clients' | 'service_records' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings'
+  ): boolean => {
+    if (!isAuthenticated) return false;
+
     const roleLower = String(currentUser.role).toLowerCase();
     if (roleLower.includes('client') || roleLower.includes('external')) return false;
     if (currentUser.role === 'hr_admin') return true;
@@ -103,7 +180,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (module === 'reports') {
       // Organization-wide Reports and Analytics is strictly for HR Admin and Senior Management (Dr. Selvakumar)
-      // Blocked for regular employees and reporting managers (Krishnaraj) per Section 7.2 and 7.3
       return currentUser.role === 'senior_manager';
     }
 
@@ -125,21 +201,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Field-level access: Salary, Bank info
   const canViewConfidentialSalary = (targetEmployeeId: string): boolean => {
+    if (!isAuthenticated) return false;
     if (currentUser.role === 'hr_admin') return true;
     // Employees and managers can view only their own salary
     return currentUser.employeeId === targetEmployeeId;
   };
 
   const canManageOrganization = (): boolean => {
-    return currentUser.role === 'hr_admin';
+    return isAuthenticated && currentUser.role === 'hr_admin';
   };
 
   const canProcessPayroll = (): boolean => {
-    return currentUser.role === 'hr_admin';
+    return isAuthenticated && currentUser.role === 'hr_admin';
   };
 
   // Hierarchy check: Manager can approve if employee reports to them. Self-approval strictly forbidden!
   const canApproveRequestFor = (requesterEmployeeId: string): boolean => {
+    if (!isAuthenticated) return false;
     if (requesterEmployeeId === currentUser.employeeId) return false; // Self-approval prohibited
     if (currentUser.role === 'hr_admin') return true;
     const requester = db.getEmployeeById(requesterEmployeeId);
@@ -153,8 +231,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         currentUser,
         currentEmployee,
-        switchPersona,
+        isAuthenticated,
+        isLoading,
         allPersonas,
+        login,
+        logout,
         canAccessModule,
         canViewConfidentialSalary,
         canManageOrganization,

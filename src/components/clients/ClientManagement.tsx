@@ -4,7 +4,7 @@
 // 3. Complete Deployment Lifecycle with Extension and Completion Tracking
 // 4. In-Memory Session State only (No Database, No Backend, Clean Empty States)
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Building2,
   Users,
@@ -43,6 +43,8 @@ import {
   DeploymentStatus,
   ClientAttendanceApprovalStatus
 } from './clientModuleTypes';
+import { clientAttendanceIntegration } from './clientAttendanceIntegration';
+import { db } from '../../db/storage';
 
 // Re-export compatibility interfaces and helper functions for read-only consumers
 export type { ClientRecord, AssignmentRecord, DeploymentExtensionEntry };
@@ -86,11 +88,66 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
     'registry' | 'supervisors' | 'deployments' | 'approvals'
   >('registry');
 
-  // In-Memory Session State (Isolated, no DB or persistent storage)
-  const [clients, setClients] = useState<ClientRecord[]>([]);
-  const [supervisors, setSupervisors] = useState<ClientSupervisorRecord[]>([]);
-  const [deployments, setDeployments] = useState<AssignmentRecord[]>([]);
-  const [approvals, setApprovals] = useState<ClientAttendanceVerificationRecord[]>([]);
+  // Connected In-Memory Integration State (Strictly in-memory, no DB, no localStorage)
+  const [clients, setClients] = useState<ClientRecord[]>(() => clientAttendanceIntegration.getClients());
+  const [supervisors, setSupervisors] = useState<ClientSupervisorRecord[]>(() => clientAttendanceIntegration.getSupervisors());
+  const [deployments, setDeployments] = useState<AssignmentRecord[]>(() => clientAttendanceIntegration.getDeployments());
+  const [approvals, setApprovals] = useState<ClientAttendanceVerificationRecord[]>(() =>
+    clientAttendanceIntegration.getVerifications().map((v) => ({
+      id: v.id,
+      deploymentId: v.deploymentId,
+      employeeId: v.employeeId,
+      employeeName: v.employeeName,
+      clientId: v.clientId,
+      clientName: v.clientName,
+      supervisorName: v.supervisorName,
+      attendanceDate: v.attendanceDate,
+      shiftName: v.shiftName,
+      checkIn: v.checkInTime,
+      checkOut: v.checkOutTime,
+      workingHours: v.workingHours,
+      status: v.verificationStatus as any,
+      clientSupervisorDecision: v.supervisorDecision,
+      clientSupervisorNotes: v.supervisorRemarks,
+      clientVerifiedAt: v.supervisorActionDate,
+      hrDecision: v.hrVerificationStatus === 'Approved' ? 'Approved' : v.hrVerificationStatus === 'Rejected' ? 'Rejected' : undefined,
+      hrNotes: v.hrRemarks,
+      hrVerifiedAt: v.hrActionDate
+    }))
+  );
+
+  // Subscribe to changes in clientAttendanceIntegration
+  useEffect(() => {
+    const syncFromIntegration = () => {
+      setClients(clientAttendanceIntegration.getClients());
+      setSupervisors(clientAttendanceIntegration.getSupervisors());
+      setDeployments(clientAttendanceIntegration.getDeployments());
+      setApprovals(
+        clientAttendanceIntegration.getVerifications().map((v) => ({
+          id: v.id,
+          deploymentId: v.deploymentId,
+          employeeId: v.employeeId,
+          employeeName: v.employeeName,
+          clientId: v.clientId,
+          clientName: v.clientName,
+          supervisorName: v.supervisorName,
+          attendanceDate: v.attendanceDate,
+          shiftName: v.shiftName,
+          checkIn: v.checkInTime,
+          checkOut: v.checkOutTime,
+          workingHours: v.workingHours,
+          status: v.verificationStatus as any,
+          clientSupervisorDecision: v.supervisorDecision,
+          clientSupervisorNotes: v.supervisorRemarks,
+          clientVerifiedAt: v.supervisorActionDate,
+          hrDecision: v.hrVerificationStatus === 'Approved' ? 'Approved' : v.hrVerificationStatus === 'Rejected' ? 'Rejected' : undefined,
+          hrNotes: v.hrRemarks,
+          hrVerifiedAt: v.hrActionDate
+        }))
+      );
+    };
+    return clientAttendanceIntegration.subscribe(syncFromIntegration);
+  }, []);
 
   // Feedback notifications (Session only)
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'info'; text: string } | null>(null);
@@ -202,24 +259,89 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
     e.preventDefault();
     if (!clientForm.name.trim()) return;
 
+    const trimmedSupervisorEmail = clientForm.supervisorEmail.trim();
+    const trimmedSupervisorName = clientForm.designatedSupervisor.trim();
+
     if (editingClient) {
-      setClients((prev) =>
-        prev.map((c) =>
-          c.id === editingClient.id
-            ? { ...c, ...clientForm, officialEmail: clientForm.email, contactNumber: clientForm.phone }
-            : c
-        )
-      );
-      showToast(`Client "${clientForm.name}" updated successfully.`);
-    } else {
-      const newClient: ClientRecord = {
-        id: `CLI-${Date.now().toString().slice(-4)}`,
+      let designatedSupId = editingClient.designatedSupervisorId;
+
+      // Check whether entered supervisor email already exists
+      if (trimmedSupervisorEmail) {
+        const existingSup = clientAttendanceIntegration.getSupervisorByEmail(trimmedSupervisorEmail);
+        if (existingSup) {
+          if (existingSup.clientId === editingClient.id) {
+            designatedSupId = existingSup.id;
+          } else {
+            // Belongs to another client - do not silently reassign
+            showToast(`Note: Supervisor email ${trimmedSupervisorEmail} is already registered under ${existingSup.clientName}.`, 'info');
+          }
+        } else if (trimmedSupervisorName) {
+          // Create linked ClientSupervisor record
+          const newSup: ClientSupervisorRecord = {
+            id: `CSUP-${Date.now().toString().slice(-4)}`,
+            clientId: editingClient.id,
+            clientName: clientForm.name,
+            name: trimmedSupervisorName,
+            officialEmail: trimmedSupervisorEmail,
+            phone: clientForm.phone,
+            status: 'Active',
+            invitationStatus: 'Invited',
+            invitationToken: `INV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
+            invitedAt: new Date().toISOString(),
+            notes: `Designated supervisor for ${clientForm.name}`
+          };
+          clientAttendanceIntegration.saveSupervisor(newSup);
+          designatedSupId = newSup.id;
+        }
+      }
+
+      const updated: ClientRecord = {
+        ...editingClient,
         ...clientForm,
         officialEmail: clientForm.email,
         contactNumber: clientForm.phone,
+        designatedSupervisorId: designatedSupId
+      };
+      clientAttendanceIntegration.saveClient(updated);
+      showToast(`Client "${clientForm.name}" updated successfully.`);
+    } else {
+      const clientId = `CLI-${Date.now().toString().slice(-4)}`;
+      let designatedSupId: string | undefined = undefined;
+
+      // Check whether entered supervisor email already exists
+      if (trimmedSupervisorEmail) {
+        const existingSup = clientAttendanceIntegration.getSupervisorByEmail(trimmedSupervisorEmail);
+        if (existingSup) {
+          showToast(`Note: Supervisor email ${trimmedSupervisorEmail} is already registered under ${existingSup.clientName}.`, 'info');
+        } else if (trimmedSupervisorName) {
+          // Create linked ClientSupervisor record
+          const newSup: ClientSupervisorRecord = {
+            id: `CSUP-${Date.now().toString().slice(-4)}`,
+            clientId: clientId,
+            clientName: clientForm.name,
+            name: trimmedSupervisorName,
+            officialEmail: trimmedSupervisorEmail,
+            phone: clientForm.phone,
+            status: 'Active',
+            invitationStatus: 'Invited',
+            invitationToken: `INV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
+            invitedAt: new Date().toISOString(),
+            notes: `Designated supervisor created with client ${clientForm.name}`
+          };
+          clientAttendanceIntegration.saveSupervisor(newSup);
+          designatedSupId = newSup.id;
+        }
+      }
+
+      const newClient: ClientRecord = {
+        id: clientId,
+        ...clientForm,
+        officialEmail: clientForm.email,
+        contactNumber: clientForm.phone,
+        designatedSupervisorId: designatedSupId,
         createdAt: new Date().toISOString()
       };
-      setClients((prev) => [newClient, ...prev]);
+      clientAttendanceIntegration.saveClient(newClient);
       showToast(`Client organization "${clientForm.name}" registered successfully.`);
     }
     setIsClientModalOpen(false);
@@ -227,11 +349,7 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
 
   const handleToggleClientStatus = (c: ClientRecord) => {
     const updatedStatus: ClientStatus = c.status === 'Active' ? 'Inactive' : 'Active';
-    setClients((prev) =>
-      prev.map((item) =>
-        item.id === c.id ? { ...item, status: updatedStatus } : item
-      )
-    );
+    clientAttendanceIntegration.saveClient({ ...c, status: updatedStatus });
     showToast(`Client "${c.name}" marked as ${updatedStatus}.`);
   };
 
@@ -272,15 +390,21 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
     const clientName = matchedClient ? matchedClient.name : 'Unassigned Client';
 
     if (editingSupervisor) {
-      setSupervisors((prev) =>
-        prev.map((s) =>
-          s.id === editingSupervisor.id
-            ? { ...s, ...supervisorForm, clientName }
-            : s
-        )
-      );
+      const updated: ClientSupervisorRecord = {
+        ...editingSupervisor,
+        ...supervisorForm,
+        clientName
+      };
+      clientAttendanceIntegration.saveSupervisor(updated);
       showToast(`Supervisor "${supervisorForm.name}" updated.`);
     } else {
+      // Check for duplicate supervisor email
+      const existing = clientAttendanceIntegration.getSupervisorByEmail(supervisorForm.officialEmail.trim());
+      if (existing) {
+        showToast(`Supervisor with email "${supervisorForm.officialEmail}" already exists (${existing.name} at ${existing.clientName}).`, 'info');
+        return;
+      }
+
       const newSup: ClientSupervisorRecord = {
         id: `CSUP-${Date.now().toString().slice(-4)}`,
         ...supervisorForm,
@@ -289,35 +413,26 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
         invitationToken: `INV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
         invitedAt: new Date().toISOString()
       };
-      setSupervisors((prev) => [newSup, ...prev]);
+      clientAttendanceIntegration.saveSupervisor(newSup);
       showToast(`Supervisor "${supervisorForm.name}" registered. Frontend invitation generated.`);
     }
     setIsSupervisorModalOpen(false);
   };
 
   const handleResendInvitation = (s: ClientSupervisorRecord) => {
-    setSupervisors((prev) =>
-      prev.map((item) =>
-        item.id === s.id
-          ? {
-              ...item,
-              invitationStatus: 'Invited',
-              invitationToken: `INV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
-              invitedAt: new Date().toISOString()
-            }
-          : item
-      )
-    );
+    const updated: ClientSupervisorRecord = {
+      ...s,
+      invitationStatus: 'Invited',
+      invitationToken: `INV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
+      invitedAt: new Date().toISOString()
+    };
+    clientAttendanceIntegration.saveSupervisor(updated);
     showToast(`Simulation: Invitation re-sent to ${s.officialEmail} (Frontend demo only).`, 'info');
   };
 
   const handleToggleSupervisorStatus = (s: ClientSupervisorRecord) => {
     const updatedStatus = s.status === 'Active' ? 'Inactive' : 'Active';
-    setSupervisors((prev) =>
-      prev.map((item) =>
-        item.id === s.id ? { ...item, status: updatedStatus } : item
-      )
-    );
+    clientAttendanceIntegration.saveSupervisor({ ...s, status: updatedStatus });
     showToast(`Supervisor "${s.name}" set to ${updatedStatus}.`);
   };
 
@@ -327,13 +442,15 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
   const handleOpenCreateDeployment = () => {
     setEditingDeployment(null);
     const firstClient = clients[0];
+    const clientSups = firstClient ? clientAttendanceIntegration.getSupervisorsByClient(firstClient.id) : [];
+    const firstSup = clientSups[0];
     setDeploymentForm({
       employeeId: '',
       employeeName: '',
       clientId: firstClient?.id || '',
       project: '',
-      clientSupervisorName: firstClient?.designatedSupervisor || '',
-      clientSupervisorEmail: firstClient?.supervisorEmail || '',
+      clientSupervisorName: firstSup?.name || firstClient?.designatedSupervisor || '',
+      clientSupervisorEmail: firstSup?.officialEmail || firstClient?.supervisorEmail || '',
       startDate: new Date().toISOString().split('T')[0],
       plannedEndDate: '',
       workMode: 'Onsite',
@@ -354,24 +471,32 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
     const matchedClient = clients.find((c) => c.id === deploymentForm.clientId);
     const clientName = matchedClient ? matchedClient.name : 'Client Organization';
 
+    // Find assigned supervisor to link ID
+    const matchedSup = supervisors.find(
+      (s) =>
+        s.clientId === deploymentForm.clientId &&
+        (s.name === deploymentForm.clientSupervisorName || s.officialEmail === deploymentForm.clientSupervisorEmail)
+    );
+
     if (editingDeployment) {
-      setDeployments((prev) =>
-        prev.map((d) =>
-          d.id === editingDeployment.id
-            ? { ...d, ...deploymentForm, clientName }
-            : d
-        )
-      );
+      const updated: AssignmentRecord = {
+        ...editingDeployment,
+        ...deploymentForm,
+        clientName,
+        clientSupervisorId: matchedSup?.id || editingDeployment.clientSupervisorId
+      };
+      clientAttendanceIntegration.saveDeployment(updated);
       showToast(`Deployment for "${deploymentForm.employeeName}" updated.`);
     } else {
       const newDep: AssignmentRecord = {
         id: `CAS-${Date.now().toString().slice(-4)}`,
         ...deploymentForm,
         clientName,
+        clientSupervisorId: matchedSup?.id,
         extensions: [],
         createdAt: new Date().toISOString()
       };
-      setDeployments((prev) => [newDep, ...prev]);
+      clientAttendanceIntegration.saveDeployment(newDep);
       showToast(`Employee "${deploymentForm.employeeName}" deployed to ${clientName}.`);
     }
     setIsDeploymentModalOpen(false);
@@ -405,18 +530,14 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
       remarks: extensionForm.remarks
     };
 
-    setDeployments((prev) =>
-      prev.map((d) => {
-        if (d.id !== extendingDeployment.id) return d;
-        return {
-          ...d,
-          status: 'Extended',
-          revisedEndDate: extensionForm.revisedEndDate,
-          extensions: [newExtension, ...(d.extensions || [])]
-        };
-      })
-    );
+    const updated: AssignmentRecord = {
+      ...extendingDeployment,
+      status: 'Extended',
+      revisedEndDate: extensionForm.revisedEndDate,
+      extensions: [newExtension, ...(extendingDeployment.extensions || [])]
+    };
 
+    clientAttendanceIntegration.saveDeployment(updated);
     showToast(`Project deployment extended until ${extensionForm.revisedEndDate}. Extension history preserved.`);
     setIsExtensionModalOpen(false);
   };
@@ -431,18 +552,14 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
   const handleConfirmCompletion = () => {
     if (!completingDeployment) return;
 
-    setDeployments((prev) =>
-      prev.map((d) => {
-        if (d.id !== completingDeployment.id) return d;
-        return {
-          ...d,
-          status: 'Completed',
-          actualEndDate: completionDate,
-          actualCompletionDate: completionDate
-        };
-      })
-    );
+    const updated: AssignmentRecord = {
+      ...completingDeployment,
+      status: 'Completed',
+      actualEndDate: completionDate,
+      actualCompletionDate: completionDate
+    };
 
+    clientAttendanceIntegration.saveDeployment(updated);
     showToast(`Deployment ${completingDeployment.id} completed on ${completionDate}. Employee returns to standard attendance routing.`);
     setIsCompleteModalOpen(false);
   };
@@ -451,33 +568,21 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
   // Client Attendance & Approvals Handlers
   // -------------------------------------------------------------
   const handleSimulateClientApproval = (item: ClientAttendanceVerificationRecord, decision: 'Approved' | 'Rejected') => {
-    setApprovals((prev) =>
-      prev.map((a) => {
-        if (a.id !== item.id) return a;
-        return {
-          ...a,
-          status: decision === 'Approved' ? 'Client Approved' : 'Client Rejected',
-          clientSupervisorDecision: decision,
-          clientVerifiedAt: new Date().toISOString(),
-          clientSupervisorNotes: decision === 'Approved' ? 'Attendance verified onsite' : 'Discrepancy noted'
-        };
-      })
+    clientAttendanceIntegration.handleClientSupervisorDecision(
+      item.id,
+      decision,
+      decision === 'Approved' ? 'Attendance verified onsite' : 'Discrepancy noted',
+      currentUser?.name || 'Client Supervisor'
     );
     showToast(`Attendance marked as ${decision === 'Approved' ? 'Client Approved' : 'Client Rejected'}.`);
   };
 
   const handleFinalHRApproval = (item: ClientAttendanceVerificationRecord, decision: 'Approved' | 'Rejected') => {
-    setApprovals((prev) =>
-      prev.map((a) => {
-        if (a.id !== item.id) return a;
-        return {
-          ...a,
-          status: decision === 'Approved' ? 'HR Approved' : 'HR Rejected',
-          hrDecision: decision,
-          hrVerifiedAt: new Date().toISOString(),
-          hrNotes: `Processed by ${currentUser?.name || 'HR Admin'}`
-        };
-      })
+    clientAttendanceIntegration.handleHRVerificationDecision(
+      item.id,
+      decision,
+      `Processed by ${currentUser?.name || 'HR Admin'}`,
+      currentUser?.name || 'HR Admin'
     );
     showToast(`HR Final Verification: Record ${decision === 'Approved' ? 'HR Approved' : 'HR Rejected'}.`);
   };
@@ -1461,11 +1566,13 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
                     value={deploymentForm.clientId}
                     onChange={(e) => {
                       const selectedC = clients.find((c) => c.id === e.target.value);
+                      const clientSups = selectedC ? clientAttendanceIntegration.getSupervisorsByClient(selectedC.id) : [];
+                      const primarySup = clientSups.find((s) => s.id === selectedC?.designatedSupervisorId) || clientSups[0];
                       setDeploymentForm({
                         ...deploymentForm,
                         clientId: e.target.value,
-                        clientSupervisorName: selectedC?.designatedSupervisor || '',
-                        clientSupervisorEmail: selectedC?.supervisorEmail || ''
+                        clientSupervisorName: primarySup?.name || selectedC?.designatedSupervisor || '',
+                        clientSupervisorEmail: primarySup?.officialEmail || selectedC?.supervisorEmail || ''
                       });
                     }}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
@@ -1495,13 +1602,27 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-700 font-medium mb-1">Client Supervisor</label>
-                  <input
-                    type="text"
+                  <select
                     value={deploymentForm.clientSupervisorName}
-                    onChange={(e) => setDeploymentForm({ ...deploymentForm, clientSupervisorName: e.target.value })}
-                    placeholder="Designated supervisor"
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  />
+                    onChange={(e) => {
+                      const sup = supervisors.find((s) => s.name === e.target.value);
+                      setDeploymentForm({
+                        ...deploymentForm,
+                        clientSupervisorName: e.target.value,
+                        clientSupervisorEmail: sup?.officialEmail || deploymentForm.clientSupervisorEmail
+                      });
+                    }}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+                    <option value="">Select client supervisor...</option>
+                    {supervisors
+                      .filter((s) => !deploymentForm.clientId || s.clientId === deploymentForm.clientId)
+                      .map((s) => (
+                        <option key={s.id} value={s.name}>
+                          {s.name} ({s.status})
+                        </option>
+                      ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-slate-700 font-medium mb-1">Supervisor Email</label>

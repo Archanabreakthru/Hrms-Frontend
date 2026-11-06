@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AuthProvider } from './services/authContext';
+import { AuthProvider, useAuth } from './services/authContext';
+import { LoginPage } from './components/auth/LoginPage';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { DashboardHub } from './components/dashboard/DashboardHub';
@@ -22,6 +23,7 @@ import { ArrowLeft } from 'lucide-react';
 import { ClientPortalApp } from './components/client-portal/ClientPortalApp';
 
 function MainApp() {
+  const { isAuthenticated } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [navContext, setNavContext] = useState<NavigationContext | undefined>(undefined);
   const [navVersion, setNavVersion] = useState(0);
@@ -198,6 +200,11 @@ function MainApp() {
         }}
       />
     );
+  }
+
+  // Route Protection: Unauthenticated access requires Login
+  if (!isAuthenticated) {
+    return <LoginPage />;
   }
 
   return (
