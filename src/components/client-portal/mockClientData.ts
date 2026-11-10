@@ -28,10 +28,14 @@ export interface ClientManagerProfile {
   roleTitle: string; // "Client Manager"
   companyName: string; // "Acme Technologies Pvt. Ltd."
   avatarInitials: string;
+  clientId?: string;
+  supervisorId?: string;
 }
 
 export const DEFAULT_CLIENT_MANAGER: ClientManagerProfile = {
-  id: 'CM-001',
+  id: 'CSUP-105',
+  supervisorId: 'CSUP-105',
+  clientId: 'CLI-103',
   name: 'Rohit Kumar',
   email: 'rohit.kumar@acme-tech.example.com',
   roleTitle: 'Client Manager',
