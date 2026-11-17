@@ -1,12 +1,14 @@
-// Orbyx HRMS Auth Context - strictly typed role-based access
-// Updated for Individual User Login & Development Session Management
+// Celestial HRMS Auth Context - strictly typed role-based access
+// Integrated with Database-backed Auth Service API
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { CurrentUser, Employee } from '../types/hrms';
 import { personaUsers } from '../db/initialData';
 import { db, initDatabase, subscribeToDB } from '../db/storage';
-import { validateDevCredentials } from './devCredentials';
+import { authApi } from './authApi';
 
-export const ORBYX_SESSION_KEY = 'orbyx_hrms_authenticated_user_id';
+export const Celestial_SESSION_KEY = 'orbyx_hrms_authenticated_user_id';
+export const Celestial_ACCESS_TOKEN_KEY = 'orbyx_hrms_access_token';
+export const Celestial_REFRESH_TOKEN_KEY = 'orbyx_hrms_refresh_token';
 
 interface AuthContextType {
   currentUser: CurrentUser;
@@ -44,19 +46,19 @@ function enrichPersonaWithLiveEmployee(persona: CurrentUser): CurrentUser {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(() => {
+  const [activeUser, setActiveUser] = useState<CurrentUser | null>(() => {
     initDatabase();
-    // Validate stored development session on application startup
-    const savedUserId = localStorage.getItem(ORBYX_SESSION_KEY);
-    if (!savedUserId) return null; // No default user!
-
-    // Verify stored user exists in canonical user definitions
-    const exists = personaUsers.find((p) => p.id === savedUserId);
-    if (!exists) {
-      localStorage.removeItem(ORBYX_SESSION_KEY);
-      return null;
+    try {
+      const rawUser = localStorage.getItem('celestial_hrms_user_profile');
+      if (rawUser) return JSON.parse(rawUser);
+    } catch {
+      // ignore
     }
-    return exists.id;
+    const savedUserId = localStorage.getItem(Celestial_SESSION_KEY);
+    if (!savedUserId) return null;
+
+    const exists = personaUsers.find((p) => p.id === savedUserId);
+    return exists || null;
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -68,18 +70,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
+  // Live session restoration & verification from backend /auth/me
+  useEffect(() => {
+    const token = localStorage.getItem(Celestial_ACCESS_TOKEN_KEY);
+    if (token) {
+      authApi.getMe(token).then((data) => {
+        if (data && (data.user || data.id)) {
+          const u = data.user || data;
+          const role = u.roleCode || u.role || 'employee';
+          const restored: CurrentUser = {
+            id: u.id,
+            name: u.username || u.name || (u.email ? u.email.split('@')[0] : 'Admin'),
+            username: u.username,
+            email: u.email || '',
+            role: role,
+            employeeId: u.employeeId || '',
+            departmentId: u.departmentId || '',
+            designationTitle: role === 'super_admin' ? 'Super Administrator' : (u.designationTitle || (role === 'hr_admin' ? 'HR Manager' : 'Staff')),
+            avatarUrl: u.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.username || u.email || 'Admin')}&background=4f46e5&color=fff&size=256`
+          };
+          setActiveUser(restored);
+          localStorage.setItem('celestial_hrms_user_profile', JSON.stringify(restored));
+          localStorage.setItem(Celestial_SESSION_KEY, restored.id);
+        }
+      }).catch(() => {});
+    }
+  }, []);
+
   const allPersonas = useMemo(() => {
     void dbTick;
     return personaUsers.map(enrichPersonaWithLiveEmployee);
   }, [dbTick]);
 
   const currentUser = useMemo(() => {
-    if (!selectedUserId) {
-      // Provide a fallback reference so internal components don't crash before login mounts
-      return allPersonas[0];
-    }
-    return allPersonas.find((p) => p.id === selectedUserId) || allPersonas[0];
-  }, [allPersonas, selectedUserId]);
+    if (activeUser) return activeUser;
+    // Provide a fallback reference so internal components don't crash before login mounts
+    return allPersonas[0];
+  }, [activeUser, allPersonas]);
 
   const currentEmployee = useMemo(() => {
     void dbTick;
@@ -88,9 +115,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [currentUser, dbTick]);
 
   // True only when a valid session token is established in state
-  const isAuthenticated = selectedUserId !== null;
+  const isAuthenticated = activeUser !== null;
 
-  // Authenticate using individual temporary credentials
+  // Authenticate using database backend
   const login = async (
     usernameOrEmail: string,
     passwordInput: string
@@ -98,44 +125,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
 
     try {
-      // Small simulated async delay for natural UI feel
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      // 1. Attempt genuine database-backed authentication via API Gateway / Auth Service
+      const backendRes = await authApi.login(usernameOrEmail, passwordInput);
+      if (backendRes.success && backendRes.user) {
+        if (backendRes.accessToken) localStorage.setItem(Celestial_ACCESS_TOKEN_KEY, backendRes.accessToken);
+        if (backendRes.refreshToken) localStorage.setItem(Celestial_REFRESH_TOKEN_KEY, backendRes.refreshToken);
 
-      const validation = validateDevCredentials(usernameOrEmail, passwordInput);
-      if (!validation.success || !validation.userId) {
-        return { success: false, error: validation.error || 'Authentication failed.' };
-      }
-
-      const target = personaUsers.find((p) => p.id === validation.userId);
-      if (!target) {
-        return { success: false, error: 'User identity record not found in system.' };
-      }
-
-      // Validate account status from live employee roster
-      const emp = db.getEmployeeById(target.employeeId);
-      if (emp && emp.status !== 'Active') {
-        return {
-          success: false,
-          error: `Account for ${target.name} is currently ${emp.status}. Access denied.`
+        // Verified backend user context
+        const u = backendRes.user;
+        const role = (u.role || (u as any).roleCode || 'employee') as any;
+        const matched: CurrentUser = {
+          id: u.id,
+          name: u.username || u.name || u.email.split('@')[0],
+          username: u.username,
+          email: u.email,
+          role: role,
+          employeeId: u.employeeId || '',
+          departmentId: u.departmentId || '',
+          designationTitle: role === 'super_admin' ? 'Super Administrator' : (u.designationTitle || (role === 'hr_admin' ? 'HR Manager' : 'Staff')),
+          avatarUrl: u.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.username || u.email)}&background=4f46e5&color=fff&size=256`
         };
+
+        setActiveUser(matched);
+        localStorage.setItem('celestial_hrms_user_profile', JSON.stringify(matched));
+        localStorage.setItem(Celestial_SESSION_KEY, matched.id);
+
+        db.logAudit({
+          actorUserId: matched.id,
+          actorName: matched.name,
+          actorRole: matched.role,
+          action: 'LOGIN',
+          module: 'SYSTEM',
+          entityId: matched.id,
+          entityName: matched.name,
+          description: `Database-backed login successful for ${matched.name} (${matched.role})`
+        });
+
+        return { success: true };
       }
 
-      setSelectedUserId(target.id);
-      localStorage.setItem(ORBYX_SESSION_KEY, target.id);
-
-      const enriched = enrichPersonaWithLiveEmployee(target);
-      db.logAudit({
-        actorUserId: enriched.id,
-        actorName: enriched.name,
-        actorRole: enriched.role,
-        action: 'LOGIN',
-        module: 'SYSTEM',
-        entityId: enriched.id,
-        entityName: enriched.name,
-        description: `Individual development login successful for ${enriched.name} (${enriched.role})`
-      });
-
-      return { success: true };
+      // Return explicit backend error (e.g. invalid credentials, account locked/suspended)
+      return { 
+        success: false, 
+        error: backendRes.error || 'Authentication failed. Please check your credentials and try again.' 
+      };
+    } catch (err: any) {
+      return { 
+        success: false, 
+        error: err.message || 'Unable to connect to authentication server. Please check your network connection or contact IT support.' 
+      };
     } finally {
       setIsLoading(false);
     }
@@ -143,56 +181,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Secure logout handler
   const logout = () => {
-    if (selectedUserId) {
-      const activeUser = allPersonas.find((p) => p.id === selectedUserId);
-      if (activeUser) {
-        db.logAudit({
-          actorUserId: activeUser.id,
-          actorName: activeUser.name,
-          actorRole: activeUser.role,
-          action: 'LOGIN',
-          module: 'SYSTEM',
-          entityId: activeUser.id,
-          entityName: activeUser.name,
-          description: `User ${activeUser.name} signed out.`
-        });
-      }
+    if (activeUser) {
+      db.logAudit({
+        actorUserId: activeUser.id,
+        actorName: activeUser.name,
+        actorRole: activeUser.role,
+        action: 'LOGIN',
+        module: 'SYSTEM',
+        entityId: activeUser.id,
+        entityName: activeUser.name,
+        description: `User ${activeUser.name} signed out.`
+      });
     }
 
-    setSelectedUserId(null);
-    localStorage.removeItem(ORBYX_SESSION_KEY);
+    setActiveUser(null);
+    localStorage.removeItem('celestial_hrms_user_profile');
+    localStorage.removeItem(Celestial_SESSION_KEY);
+    const refreshToken = localStorage.getItem(Celestial_REFRESH_TOKEN_KEY);
+    authApi.logout(refreshToken || undefined);
+    localStorage.removeItem(Celestial_ACCESS_TOKEN_KEY);
+    localStorage.removeItem(Celestial_REFRESH_TOKEN_KEY);
   };
 
-  // Module Access checks (Strictly internal Orbyx roles only)
+  // Module Access checks (Strictly internal Celestial roles only)
   const canAccessModule = (
     module: 'hr' | 'organization' | 'clients' | 'service_records' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings'
   ): boolean => {
-    if (!isAuthenticated) return false;
+    if (!isAuthenticated || !currentUser) return false;
 
-    const roleLower = String(currentUser.role).toLowerCase();
+    const roleLower = String(currentUser.role || '').toLowerCase();
+    // Super Admin has root access to all administrative modules
+    if (roleLower === 'super_admin' || roleLower === 'admin') {
+      return true;
+    }
+
+    // HR Admin has full access to all business modules and organization setup
+    if (roleLower === 'hr_admin') {
+      return true;
+    }
+
     if (roleLower.includes('client') || roleLower.includes('external')) return false;
-    if (currentUser.role === 'hr_admin') return true;
 
     if (module === 'settings') return false;
-    if (module === 'organization') return currentUser.role === 'senior_manager';
+    if (module === 'organization') return roleLower === 'senior_manager';
     if (module === 'clients') return true; // Employees see only their own client assignments in the module.
     if (module === 'service_records') return true; // Access granted to internal roles with role-scoped RBAC within the page.
 
     if (module === 'reports') {
-      // Organization-wide Reports and Analytics is strictly for HR Admin and Senior Management (Dr. Selvakumar)
-      return currentUser.role === 'senior_manager';
+      return roleLower === 'senior_manager';
     }
 
-    if (currentUser.role === 'senior_manager') {
+    if (roleLower === 'senior_manager') {
       return true;
     }
 
-    if (currentUser.role === 'reporting_manager') {
+    if (roleLower === 'reporting_manager') {
       return true;
     }
 
-    if (currentUser.role === 'employee') {
-      // Employees access self-service views and directory
+    if (roleLower === 'employee') {
       return true;
     }
 
@@ -201,28 +248,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Field-level access: Salary, Bank info
   const canViewConfidentialSalary = (targetEmployeeId: string): boolean => {
-    if (!isAuthenticated) return false;
-    if (currentUser.role === 'hr_admin') return true;
-    // Employees and managers can view only their own salary
+    if (!isAuthenticated || !currentUser) return false;
+    const r = String(currentUser.role || '').toLowerCase();
+    if (r === 'super_admin' || r === 'admin' || r === 'hr_admin') return true;
     return currentUser.employeeId === targetEmployeeId;
   };
 
   const canManageOrganization = (): boolean => {
-    return isAuthenticated && currentUser.role === 'hr_admin';
+    if (!isAuthenticated || !currentUser) return false;
+    const r = String(currentUser.role || '').toLowerCase();
+    return r === 'super_admin' || r === 'admin' || r === 'hr_admin';
   };
 
   const canProcessPayroll = (): boolean => {
-    return isAuthenticated && currentUser.role === 'hr_admin';
+    if (!isAuthenticated || !currentUser) return false;
+    const r = String(currentUser.role || '').toLowerCase();
+    return r === 'super_admin' || r === 'admin' || r === 'hr_admin';
   };
 
   // Hierarchy check: Manager can approve if employee reports to them. Self-approval strictly forbidden!
   const canApproveRequestFor = (requesterEmployeeId: string): boolean => {
-    if (!isAuthenticated) return false;
+    if (!isAuthenticated || !currentUser) return false;
     if (requesterEmployeeId === currentUser.employeeId) return false; // Self-approval prohibited
-    if (currentUser.role === 'hr_admin') return true;
+    const r = String(currentUser.role || '').toLowerCase();
+    if (r === 'super_admin' || r === 'admin' || r === 'hr_admin') return true;
     const requester = db.getEmployeeById(requesterEmployeeId);
     if (!requester) return false;
-    // Direct report check
     return requester.reportingManagerId === currentUser.employeeId;
   };
 

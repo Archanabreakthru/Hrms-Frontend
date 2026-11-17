@@ -24,7 +24,10 @@ import { NewEmployeeModal } from './NewEmployeeModal';
 import { OrgChart } from './OrgChart';
 import { ServiceRecordsManagement } from '../services/ServiceRecordsManagement';
 import { hrmsService } from '../../services/hrmsService';
-import { readAssignments } from '../clients/ClientManagement';
+import { employeeApi } from '../../services/employeeApi';
+import { authApi } from '../../services/authApi';
+import { orgApi, BackendBranch, BackendDepartment, BackendDesignation } from '../../services/orgApi';
+import { Celestial_ACCESS_TOKEN_KEY } from '../../services/authContext';
 import {
   UserPlus,
   LayoutList,
@@ -37,6 +40,7 @@ import {
   Edit3,
   Power,
   RotateCcw,
+  Send,
   Users,
   Plus,
   FileText,
@@ -81,7 +85,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   const { currentUser, canManageOrganization, canAccessModule } = useAuth();
   const isRegularEmployee = currentUser.role === 'employee';
   const isManager = currentUser.role === 'senior_manager' || currentUser.role === 'reporting_manager';
-  const isHR = currentUser.role === 'hr_admin';
+  const isHR = currentUser.role === 'super_admin' || currentUser.role === 'admin' || currentUser.role === 'hr_admin';
 
   const [viewMode, setViewMode] = useState<'reportees' | 'directory' | 'hierarchy' | 'service_records'>(() => {
     if (navContext?.subTab === 'service_records' || navContext?.subTab === 'service-records') return 'service_records';
@@ -93,11 +97,73 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     if (navContext?.managerId) return navContext.managerId;
     return currentUser.role === 'hr_admin' ? 'ALL_REPORTEES' : currentUser.employeeId;
   });
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
 
+  const [remoteEmployees, setRemoteEmployees] = useState<Employee[]>([]);
+  const [loadingRemote, setLoadingRemote] = useState<boolean>(true);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+
+  // Live master data states fetched from Organization Service API
+  const [apiBranches, setApiBranches] = useState<Array<{ id: string; name: string; city: string }>>([]);
+  const [apiDepartments, setApiDepartments] = useState<Array<{ id: string; name: string }>>([]);
+  const [apiDesignations, setApiDesignations] = useState<Array<{ id: string; title: string }>>([]);
+
+  // Subscribe to storage changes for real-time reactivity
   useEffect(() => {
     return subscribeToDB(() => setTick((t) => t + 1));
   }, []);
+
+  // Fetch live master data (departments, designations, branches) from orgApi
+  useEffect(() => {
+    let isMounted = true;
+    async function loadMasterData() {
+      try {
+        const [depts, desigs, brs] = await Promise.all([
+          orgApi.getDepartments().catch(() => []),
+          orgApi.getDesignations().catch(() => []),
+          orgApi.getBranches().catch(() => []),
+        ]);
+        if (isMounted) {
+          if (Array.isArray(depts)) {
+            setApiDepartments(depts.map((d) => ({ id: d.code || d.id, name: d.name })));
+          }
+          if (Array.isArray(desigs)) {
+            setApiDesignations(desigs.map((ds) => ({ id: ds.code || ds.id, title: ds.title })));
+          }
+          if (Array.isArray(brs)) {
+            setApiBranches(brs.map((b) => ({ id: b.code || b.id, name: b.name, city: b.city })));
+          }
+        }
+      } catch (err) {
+        console.warn('Error loading master data from orgApi:', err);
+      }
+    }
+    loadMasterData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Fetch live employees from Employee Service
+  const fetchLiveEmployees = React.useCallback(async () => {
+    try {
+      setLoadingRemote(true);
+      const res = await employeeApi.list({ limit: 100 });
+      if (res && res.employees) {
+        setRemoteEmployees(res.employees);
+        setRemoteError(null);
+      }
+    } catch (err: any) {
+      console.warn('Failed to fetch employees from backend API, displaying local sync:', err);
+      setRemoteError(err?.message || 'Unable to connect to live Employee Service.');
+    } finally {
+      setLoadingRemote(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveEmployees();
+  }, [fetchLiveEmployees, tick]);
 
   useEffect(() => {
     if (navContext?.subTab === 'reportees') {
@@ -135,6 +201,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [notice, setNotice] = useState('');
+  const [resendingMap, setResendingMap] = useState<Record<string, boolean>>({});
 
   // Filters
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>(() => navContext?.departmentFilter || 'ALL');
@@ -166,9 +233,9 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   const [showAddPolicyForm, setShowAddPolicyForm] = useState(false);
   const [polCategory, setPolCategory] = useState<InsurancePolicyCategory>('Group Medical Insurance');
   const [polProvider, setPolProvider] = useState('Star Health & Allied Insurance');
-  const [polName, setPolName] = useState('Orbyx Corporate Group Health Shield');
+  const [polName, setPolName] = useState('Celestial Corporate Group Health Shield');
   const [polNumber, setPolNumber] = useState('');
-  const [polGroupNumber, setPolGroupNumber] = useState('GRP-ORBYX-01');
+  const [polGroupNumber, setPolGroupNumber] = useState('GRP-Celestial-01');
   const [polStartDate, setPolStartDate] = useState('2026-04-01');
   const [polEndDate, setPolEndDate] = useState('2027-03-31');
   const [polCoverageAmount, setPolCoverageAmount] = useState(500000);
@@ -194,49 +261,16 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   // Load documents and insurance policies whenever editingEmployee changes
   useEffect(() => {
     if (editingEmployee?.id) {
-      const storageKey = `orbyx_extra_docs_${editingEmployee.id}`;
-      const defaultDocs: VaultDoc[] = [
-        {
-          id: `DOC-${editingEmployee.id}-1`,
-          title: 'Employment Contract & Signed Offer.pdf',
-          category: 'Offer Letter',
-          uploadedAt: editingEmployee.dateOfJoining,
-          issueDate: editingEmployee.dateOfJoining,
-          expiryDate: '',
-          status: 'Verified',
-          uploadedBy: 'Raseedh (HR Admin)'
-        },
-        {
-          id: `DOC-${editingEmployee.id}-2`,
-          title: 'Government Tax ID & PAN Card.pdf',
-          category: 'ID Proof',
-          uploadedAt: editingEmployee.dateOfJoining,
-          issueDate: '2021-04-01',
-          expiryDate: '',
-          status: 'Verified',
-          uploadedBy: `${editingEmployee.firstName} ${editingEmployee.lastName}`
-        },
-        {
-          id: `DOC-${editingEmployee.id}-3`,
-          title: 'B.Tech / Postgraduate Degree Certificate.pdf',
-          category: 'Education Certificate',
-          uploadedAt: editingEmployee.dateOfJoining,
-          issueDate: '2019-06-15',
-          expiryDate: '',
-          status: 'Verified',
-          uploadedBy: `${editingEmployee.firstName} ${editingEmployee.lastName}`
-        }
-      ];
-
+      const storageKey = `celestial_extra_docs_${editingEmployee.id}`;
       try {
         const raw = localStorage.getItem(storageKey);
         if (raw) {
           setEditingDocs(JSON.parse(raw) as VaultDoc[]);
         } else {
-          setEditingDocs(defaultDocs);
+          setEditingDocs([]);
         }
       } catch {
-        setEditingDocs(defaultDocs);
+        setEditingDocs([]);
       }
 
       setEmployeePolicies(db.getInsurancePoliciesByEmployeeId(editingEmployee.id));
@@ -251,7 +285,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
 
   const saveDocsForEditingEmployee = (docsToSave: VaultDoc[]) => {
     if (!editingEmployee?.id) return;
-    const storageKey = `orbyx_extra_docs_${editingEmployee.id}`;
+    const storageKey = `celestial_extra_docs_${editingEmployee.id}`;
     localStorage.setItem(storageKey, JSON.stringify(docsToSave));
     setEditingDocs(docsToSave);
   };
@@ -387,16 +421,16 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       nominees: polNominees,
       documents: polDocBlob
         ? [
-            {
-              id: `DOC-POL-${Date.now()}`,
-              title: polDocBlob.name,
-              fileName: polDocBlob.name,
-              fileSize: polDocBlob.size,
-              uploadedAt: new Date().toISOString().split('T')[0],
-              uploadedBy: currentUser.name,
-              fileData: polDocBlob.dataUrl
-            }
-          ]
+          {
+            id: `DOC-POL-${Date.now()}`,
+            title: polDocBlob.name,
+            fileName: polDocBlob.name,
+            fileSize: polDocBlob.size,
+            uploadedAt: new Date().toISOString().split('T')[0],
+            uploadedBy: currentUser.name,
+            fileData: polDocBlob.dataUrl
+          }
+        ]
         : [],
       updatedAt: new Date().toISOString()
     };
@@ -425,15 +459,15 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     });
   };
 
-  const departments = db.getDepartments();
-  const designations = db.getDesignations();
-  const branches = db.getBranches();
-  const allEmployees = db.getEmployees();
-  const activeClientAssignments = readAssignments().filter((a) => a.status === 'Active');
-  const deployedEmpIds = new Set(activeClientAssignments.map((a) => a.employeeId));
+  const departments = apiDepartments;
+  const designations = apiDesignations;
+  const branches = apiBranches;
+  const allEmployees = remoteEmployees;
+  // Note: Client site assignments from localStorage are unverified mock data; only verified backend client deployments should set deployedEmpIds
+  const deployedEmpIds = new Set<string>();
 
   // Retrieve authorized rows (sanitized strictly at service layer)
-  const rawRows = permissionService.getAuthorizedDirectoryRows(currentUser);
+  const rawRows = permissionService.getAuthorizedDirectoryRows(currentUser, allEmployees);
 
   // Direct Reportees list for "My Reportees" tab strictly limited to employees reporting to currentUser
   const myDirectReportees = allEmployees.filter(
@@ -472,15 +506,39 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     return false;
   };
 
-  const handleToggleEmployeeActive = (emp: Employee) => {
+  const handleToggleEmployeeActive = async (emp: Employee) => {
     if (!isHR) return;
     const nextStatus: EmploymentStatus = emp.status === 'Inactive' ? 'Active' : 'Inactive';
     const updated: Employee = { ...emp, status: nextStatus };
+    try {
+      await employeeApi.updateEmployment(emp.id, { status: nextStatus });
+      fetchLiveEmployees();
+    } catch (err: any) {
+      console.warn('Backend updateEmployment failed, syncing locally:', err);
+    }
     hrmsService.updateEmployee(updated, currentUser.id, currentUser.name);
     setNotice(`Employee ${emp.firstName} ${emp.lastName} (${emp.id}) status updated to ${nextStatus}.`);
   };
 
-  const handleSaveEditedEmployee = (e: React.FormEvent) => {
+  const handleResendInvitation = async (emp: Employee) => {
+    if (!isHR) return;
+    setResendingMap((prev) => ({ ...prev, [emp.id]: true }));
+    try {
+      const token = localStorage.getItem(Celestial_ACCESS_TOKEN_KEY) || undefined;
+      const res = await authApi.resendInvitation(emp.id, token);
+      if (res.success) {
+        setNotice(`Account activation invitation successfully resent to ${emp.officialEmail || emp.email}.`);
+      } else {
+        setNotice(`Failed to resend invitation: ${res.error || 'Server error'}`);
+      }
+    } catch (err: any) {
+      setNotice(`Network error while resending invitation: ${err.message || 'Server offline'}`);
+    } finally {
+      setResendingMap((prev) => ({ ...prev, [emp.id]: false }));
+    }
+  };
+
+  const handleSaveEditedEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingEmployee || !isHR) return;
     if (editingEmployee.reportingManagerId === editingEmployee.id) {
@@ -489,6 +547,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     }
     if (
       editingEmployee.reportingManagerId &&
+      editingEmployee.id &&
       isDescendantOf(editingEmployee.reportingManagerId, editingEmployee.id)
     ) {
       setEditError(
@@ -497,6 +556,21 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       return;
     }
     setEditError('');
+    try {
+      if (editingEmployee.reportingManagerId) {
+        await employeeApi.updateReporting(editingEmployee.id, editingEmployee.reportingManagerId);
+      }
+      await employeeApi.updateEmployment(editingEmployee.id, {
+        departmentId: editingEmployee.departmentId,
+        designationId: editingEmployee.designationId,
+        branchId: editingEmployee.branchId,
+        employmentType: editingEmployee.employmentType,
+        status: editingEmployee.status,
+      });
+      fetchLiveEmployees();
+    } catch (err: any) {
+      console.warn('Backend update failed during employee edit:', err);
+    }
     hrmsService.updateEmployee(editingEmployee, currentUser.id, currentUser.name);
     setNotice(`Saved changes to ${editingEmployee.firstName} ${editingEmployee.lastName} (${editingEmployee.id}).`);
     setEditingEmployee(null);
@@ -625,11 +699,10 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         cell: (r: any) => (
           <button
             onClick={() => setSelectedEmployee(r)}
-            className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors ${
-              r.isDirectReport
+            className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors ${r.isDirectReport
                 ? 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
                 : 'text-slate-700 bg-slate-100 hover:bg-slate-200'
-            }`}
+              }`}
           >
             <Eye className="h-3 w-3" />
             <span>{r.isDirectReport ? 'Team Profile' : 'View Contact'}</span>
@@ -682,8 +755,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           const br = branches.find((b) => b.id === emp.branchId);
           return (
             <div>
-              <span className="font-medium text-slate-800 block">{dept?.name || emp.departmentId}</span>
-              <span className="text-[11px] text-slate-400">{br?.city || 'Bengaluru'}</span>
+              <span className="font-medium text-slate-800 block">{dept?.name || (emp.departmentId ? emp.departmentId : '—')}</span>
+              <span className="text-[11px] text-slate-400">{br ? br.city : '—'}</span>
             </div>
           );
         }
@@ -694,33 +767,39 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         sortable: true,
         cell: (emp: Employee) => {
           const comp = calculateProfileCompleteness(emp);
+          const isPendingActivation = emp.accountStatus === 'PENDING_ACTIVATION' || emp.invitationStatus === 'PENDING_INVITE' || emp.invitationStatus === 'SENT';
           return (
             <div className="space-y-1">
-              <span
-                className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-                  emp.status === 'Active'
-                    ? 'text-emerald-700'
-                    : emp.status === 'On Leave'
-                    ? 'text-amber-700'
-                    : 'text-slate-600'
-                }`}
-              >
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    emp.status === 'Active' ? 'bg-emerald-500' : emp.status === 'On Leave' ? 'bg-amber-500' : 'bg-slate-400'
-                  }`}
-                />
-                <span>{emp.status}</span>
-              </span>
+                  className={`inline-flex items-center gap-1.5 text-xs font-medium ${emp.status === 'Active'
+                      ? 'text-emerald-700'
+                      : emp.status === 'On Leave'
+                        ? 'text-amber-700'
+                        : 'text-slate-600'
+                    }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${emp.status === 'Active' ? 'bg-emerald-500' : emp.status === 'On Leave' ? 'bg-amber-500' : 'bg-slate-400'
+                      }`}
+                  />
+                  <span>{emp.status}</span>
+                </span>
+
+                {isPendingActivation && (
+                  <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                    Pending Invite
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-1.5">
                 <span
-                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                    comp.percentage >= 85
+                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${comp.percentage >= 85
                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                       : comp.percentage >= 50
-                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                      : 'bg-slate-100 text-slate-600 border border-slate-200'
-                  }`}
+                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}
                 >
                   {comp.percentage}%
                 </span>
@@ -748,45 +827,60 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       },
       {
         header: 'Actions',
-        cell: (emp: Employee) => (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setSelectedEmployee(emp)}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
-            >
-              <Eye className="h-3 w-3" />
-              <span>View Profile</span>
-            </button>
-            {isHR && (
-              <>
-                <button
-                  onClick={() => setEditingEmployee({ ...emp })}
-                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                >
-                  <Edit3 className="h-3 w-3" />
-                  <span>Edit</span>
-                </button>
-                <button
-                  onClick={() => handleToggleEmployeeActive(emp)}
-                  className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg transition-colors ${
-                    emp.status === 'Inactive'
-                      ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
-                      : 'text-rose-700 bg-rose-50 hover:bg-rose-100'
-                  }`}
-                  title={emp.status === 'Inactive' ? 'Activate Employee' : 'Deactivate Employee'}
-                >
-                  <Power className="h-3 w-3" />
-                  <span>{emp.status === 'Inactive' ? 'Activate' : 'Deactivate'}</span>
-                </button>
-              </>
-            )}
-          </div>
-        )
+        cell: (emp: Employee) => {
+          const isPending = emp.accountStatus === 'PENDING_ACTIVATION' || emp.invitationStatus === 'PENDING_INVITE' || emp.invitationStatus === 'SENT' || emp.invitationStatus === 'FAILED' || emp.invitationStatus === 'EXPIRED';
+          const isResending = Boolean(resendingMap[emp.id]);
+
+          return (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={() => setSelectedEmployee(emp)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <Eye className="h-3 w-3" />
+                <span>View Profile</span>
+              </button>
+              {isHR && (
+                <>
+                  <button
+                    onClick={() => setEditingEmployee({ ...emp })}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Edit3 className="h-3 w-3" />
+                    <span>Edit</span>
+                  </button>
+                  {isPending && (
+                    <button
+                      onClick={() => handleResendInvitation(emp)}
+                      disabled={isResending}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                      title="Resend activation email to employee"
+                    >
+                      <Send className="h-3 w-3" />
+                      <span>{isResending ? 'Sending...' : 'Resend Invite'}</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleToggleEmployeeActive(emp)}
+                    className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg transition-colors cursor-pointer ${emp.status === 'Inactive'
+                        ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                        : 'text-rose-700 bg-rose-50 hover:bg-rose-100'
+                      }`}
+                    title={emp.status === 'Inactive' ? 'Activate Employee' : 'Deactivate Employee'}
+                  >
+                    <Power className="h-3 w-3" />
+                    <span>{emp.status === 'Inactive' ? 'Activate' : 'Deactivate'}</span>
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        }
       }
     ];
   }
 
-  const exportData = permissionService.getAuthorizedDirectoryExport(currentUser);
+  const exportData = permissionService.getAuthorizedDirectoryExport(currentUser, allEmployees);
 
   const hasActiveFilters =
     selectedDeptFilter !== 'ALL' ||
@@ -810,6 +904,25 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         </div>
       )}
 
+      {remoteError && (
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>Employee Service API warning: {remoteError}</span>
+          </div>
+          <button onClick={fetchLiveEmployees} className="font-bold ml-3 text-amber-800 underline cursor-pointer">
+            Retry Connection
+          </button>
+        </div>
+      )}
+
+      {loadingRemote && (
+        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs font-medium flex items-center gap-2">
+          <div className="h-3.5 w-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0" />
+          <span>Synchronizing live directory from Employee Service PostgreSQL database...</span>
+        </div>
+      )}
+
       {notice && (
         <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-medium flex items-center justify-between">
           <span>{notice}</span>
@@ -823,9 +936,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           <button
             type="button"
             onClick={() => setViewMode('directory')}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              viewMode === 'directory' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${viewMode === 'directory' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
           >
             <LayoutList className="h-3.5 w-3.5" />
             <span>Employee Directory ({filteredRows.length})</span>
@@ -834,9 +946,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           <button
             type="button"
             onClick={() => setViewMode('reportees')}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              viewMode === 'reportees' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${viewMode === 'reportees' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
           >
             <Users className="h-3.5 w-3.5 text-indigo-600" />
             <span>My Reportees ({directReportees.length})</span>
@@ -846,9 +957,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('hierarchy')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-                viewMode === 'hierarchy' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${viewMode === 'hierarchy' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               <GitFork className="h-3.5 w-3.5" />
               <span>Reporting Hierarchy</span>
@@ -859,9 +969,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('service_records')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-                viewMode === 'service_records' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${viewMode === 'service_records' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               <Award className="h-3.5 w-3.5 text-amber-600" />
               <span>Service Records</span>
@@ -880,7 +989,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <span>Employee Policies &rarr;</span>
             </button>
           )}
-          <ExportButton data={exportData} fileName="Orbyx_Employee_Directory" />
+          <ExportButton data={exportData} fileName="Celestial_Employee_Directory" />
           {canManageOrganization() && (
             <>
               <button
@@ -937,7 +1046,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               {directReportees.map((rep) => {
                 const dept = departments.find((d) => d.id === rep.departmentId);
                 const desig = designations.find((d) => d.id === rep.designationId);
-                const activeDeploy = activeClientAssignments.find((a) => a.employeeId === rep.id);
+                const isClientDeployed = deployedEmpIds.has(rep.id);
                 return (
                   <div
                     key={rep.id}
@@ -959,25 +1068,23 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                           <span className="font-mono text-[10px] text-slate-400">{rep.id}</span>
                         </div>
                         <p className="text-slate-600 font-medium truncate mt-0.5">{desig?.title || 'Staff'}</p>
-                        <p className="text-[11px] text-slate-400">{dept?.name}</p>
+                        <p className="text-[11px] text-slate-400">{dept?.name || '—'}</p>
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
                           <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                              rep.status === 'Active'
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${rep.status === 'Active'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : 'bg-amber-50 text-amber-700'
-                            }`}
+                              }`}
                           >
                             {rep.status}
                           </span>
                           <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                              activeDeploy
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isClientDeployed
                                 ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                                 : 'bg-slate-100 text-slate-600'
-                            }`}
+                              }`}
                           >
-                            {activeDeploy ? `Client: ${activeDeploy.project}` : 'Internal Operations'}
+                            {isClientDeployed ? 'Client Site' : 'Internal Operations'}
                           </span>
                         </div>
                       </div>
@@ -1133,7 +1240,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         onClose={() => setSelectedEmployee(null)}
       />
 
-            {/* Edit Employee Modal - Comprehensive Multi-Section / Tabbed Form */}
+      {/* Edit Employee Modal - Comprehensive Multi-Section / Tabbed Form */}
       {editingEmployee && isHR && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <form
@@ -1168,9 +1275,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => setEditModalTab('personal')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  editModalTab === 'personal' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${editModalTab === 'personal' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
               >
                 <User className="h-3.5 w-3.5" />
                 <span>Personal & Contact</span>
@@ -1178,9 +1284,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => setEditModalTab('employment')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  editModalTab === 'employment' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${editModalTab === 'employment' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
               >
                 <Briefcase className="h-3.5 w-3.5" />
                 <span>Employment</span>
@@ -1188,9 +1293,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => setEditModalTab('org')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  editModalTab === 'org' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${editModalTab === 'org' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
               >
                 <GitFork className="h-3.5 w-3.5" />
                 <span>Org & Reporting</span>
@@ -1198,9 +1302,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => setEditModalTab('salary')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  editModalTab === 'salary' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${editModalTab === 'salary' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
               >
                 <CreditCard className="h-3.5 w-3.5" />
                 <span>Salary & Bank</span>
@@ -1208,9 +1311,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => setEditModalTab('statutory')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  editModalTab === 'statutory' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${editModalTab === 'statutory' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
                 <span>Statutory & Tax</span>
@@ -1218,9 +1320,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => setEditModalTab('insurance')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  editModalTab === 'insurance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${editModalTab === 'insurance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
               >
                 <HeartPulse className="h-3.5 w-3.5" />
                 <span>Insurance & Nominees</span>
@@ -1228,9 +1329,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => setEditModalTab('documents')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  editModalTab === 'documents' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-colors ${editModalTab === 'documents' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
               >
                 <FileText className="h-3.5 w-3.5" />
                 <span>Documents / Document Vault</span>
@@ -2228,13 +2328,12 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-slate-900 text-sm">{pol.policyName}</span>
                               <span
-                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                                  pol.status === 'Enrolled'
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${pol.status === 'Enrolled'
                                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                     : pol.status === 'Pending Information'
-                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                    : 'bg-rose-50 text-rose-700 border-rose-200'
-                                }`}
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}
                               >
                                 {pol.status}
                               </span>
@@ -2495,6 +2594,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
 
                 {/* Document Table / List */}
                 <div className="space-y-2">
+                  {editingDocs.length === 0 && (
+                  <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-xl text-slate-500 text-xs">
+                    No documents uploaded to this employee's vault yet. Use the form above to upload verified credentials.
+                  </div>
+                )}
                   {editingDocs
                     .filter((d) => docCategoryFilter === 'All' || d.category === docCategoryFilter)
                     .map((doc) => (
@@ -2523,13 +2627,12 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
 
                         <div className="flex items-center gap-1.5">
                           <span
-                            className={`text-[10px] px-2 py-0.5 rounded font-bold border ${
-                              doc.status === 'Verified'
+                            className={`text-[10px] px-2 py-0.5 rounded font-bold border ${doc.status === 'Verified'
                                 ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
                                 : doc.status === 'Rejected'
-                                ? 'text-rose-700 bg-rose-50 border-rose-200'
-                                : 'text-amber-700 bg-amber-50 border-amber-200'
-                            }`}
+                                  ? 'text-rose-700 bg-rose-50 border-rose-200'
+                                  : 'text-amber-700 bg-amber-50 border-amber-200'
+                              }`}
                           >
                             {doc.status}
                           </span>
@@ -2708,7 +2811,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     {previewDoc.fileName || `${previewDoc.title}.pdf`} {previewDoc.fileSize ? `(${previewDoc.fileSize})` : ''}
                   </p>
                   <p className="text-xs text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full inline-block border border-emerald-200">
-                    Document verified and archived in Orbyx Secure Vault
+                    Document verified and archived in Celestial Secure Vault
                   </p>
                 </div>
               )}
@@ -2753,7 +2856,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         onClose={() => setIsImportModalOpen(false)}
         title="Bulk Import Employees (CSV)"
         description="Download the template or upload a CSV file. Duplicate official emails and missing fields are flagged per row."
-        templateFileName="Orbyx_Employees"
+        templateFileName="Celestial_Employees"
         headers={['FirstName', 'LastName', 'Email', 'Phone', 'DepartmentId', 'DesignationId', 'BaseSalaryAnnual']}
         sampleRows={[
           ['Rohan', 'Verma', 'rohan.verma@orbyx.internal', '+91 98450 77881', 'DEP-ENG', 'DES-SWE', '1250000'],
@@ -2786,40 +2889,56 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             }
           };
         }}
-        onCommit={(validRows) => {
-          validRows.forEach((r, idx) => {
-            hrmsService.createEmployee(
-              {
-                userId: `user_${Date.now()}_${idx}`,
+        onCommit={async (validRows) => {
+          for (let idx = 0; idx < validRows.length; idx++) {
+            const r = validRows[idx];
+            const payload = {
+              userId: `user_${Date.now()}_${idx}`,
+              firstName: r.firstName,
+              lastName: r.lastName,
+              email: r.email,
+              officialEmail: r.email,
+              phone: r.phone,
+              officialPhone: r.phone,
+              avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+              dateOfBirth: '1996-05-15',
+              gender: 'Other' as const,
+              address: 'Bengaluru, Karnataka',
+              emergencyContact: { name: 'Primary Kin', relationship: 'Family', phone: '+91 98000 00000' },
+              departmentId: r.deptId,
+              designationId: r.desigId,
+              branchId: 'BR-BLR',
+              employmentType: 'Permanent' as const,
+              status: 'Active' as const,
+              dateOfJoining: new Date().toISOString().slice(0, 10),
+              noticePeriodDays: 60,
+              reportingManagerId: 'EMP-002',
+              shiftId: 'SHIFT-GEN',
+              bankDetails: { accountNumber: '5010099887766', bankName: 'HDFC Bank', ifscOrRouting: 'HDFC0001234', accountType: 'Savings' as const },
+              panOrTaxNumber: 'ABCDE1234F',
+              baseSalaryAnnual: r.salary,
+              salaryStructureId: 'STRUCT-MID'
+            };
+
+            try {
+              await employeeApi.createDraft({
                 firstName: r.firstName,
                 lastName: r.lastName,
                 email: r.email,
-                officialEmail: r.email,
                 phone: r.phone,
-                officialPhone: r.phone,
-                avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-                dateOfBirth: '1996-05-15',
-                gender: 'Other',
-                address: 'Bengaluru, Karnataka',
-                emergencyContact: { name: 'Primary Kin', relationship: 'Family', phone: '+91 98000 00000' },
+                userId: payload.userId,
                 departmentId: r.deptId,
                 designationId: r.desigId,
                 branchId: 'BR-BLR',
-                employmentType: 'Permanent',
-                status: 'Active',
-                dateOfJoining: new Date().toISOString().slice(0, 10),
-                noticePeriodDays: 60,
-                reportingManagerId: 'EMP-002',
-                shiftId: 'SHIFT-GEN',
-                bankDetails: { accountNumber: '5010099887766', bankName: 'HDFC Bank', ifscOrRouting: 'HDFC0001234', accountType: 'Savings' },
-                panOrTaxNumber: 'ABCDE1234F',
-                baseSalaryAnnual: r.salary,
-                salaryStructureId: 'STRUCT-MID'
-              },
-              currentUser.id,
-              currentUser.name
-            );
-          });
+                employmentType: 'Permanent'
+              });
+            } catch (err: any) {
+              console.warn('Backend draft creation skipped or failed, syncing locally:', err);
+            }
+
+            hrmsService.createEmployee(payload, currentUser.id, currentUser.name);
+          }
+          fetchLiveEmployees();
           setNotice(`Successfully imported ${validRows.length} employee(s).`);
         }}
       />

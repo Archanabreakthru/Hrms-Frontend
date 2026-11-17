@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { db, subscribeToDB } from '../../db/storage';
 import { useAuth } from '../../services/authContext';
 import { hrmsService } from '../../services/hrmsService';
+import { payrollApi } from '../../services/payrollApi';
 import { PayrollRun, PayrollLineItem, SalaryStructure, NavigationContext } from '../../types/hrms';
 import { DataTable, Column } from '../common/DataTable';
 import { ExportButton } from '../common/ExportButton';
@@ -18,7 +19,8 @@ import {
   Layers,
   ShieldCheck,
   RotateCcw,
-  Edit3
+  Edit3,
+  Trash2
 } from 'lucide-react';
 
 interface PayrollDashboardProps {
@@ -28,7 +30,7 @@ interface PayrollDashboardProps {
 
 export const PayrollDashboard: React.FC<PayrollDashboardProps> = ({ navContext, onOpenPolicies }) => {
   const { currentUser, canProcessPayroll } = useAuth();
-  const isHR = currentUser.role === 'hr_admin';
+  const isHR = currentUser.role === 'super_admin' || currentUser.role === 'admin' || currentUser.role === 'hr_admin';
   const isMD = currentUser.role === 'senior_manager';
   const canViewRuns = isHR || isMD;
   const [, setDbTick] = useState(0);
@@ -59,8 +61,9 @@ export const PayrollDashboard: React.FC<PayrollDashboardProps> = ({ navContext, 
     if (navContext.statusFilter) setStatusFilter(navContext.statusFilter);
   }, [navContext, canViewRuns]);
 
-  // Edit Salary Structure Modal
+  // Create / Edit Salary Structure Modal
   const [editingStruct, setEditingStruct] = useState<SalaryStructure | null>(null);
+  const [isNewStructureModalOpen, setIsNewStructureModalOpen] = useState(false);
   const [structName, setStructName] = useState('');
   const [structDesc, setStructDesc] = useState('');
   const [structGross, setStructGross] = useState(100000);
@@ -161,14 +164,21 @@ export const PayrollDashboard: React.FC<PayrollDashboardProps> = ({ navContext, 
     setStructGross(s.grossMonthly);
   };
 
-  const handleSaveStructure = (e: React.FormEvent) => {
+  const openNewStructure = () => {
+    setStructName('');
+    setStructDesc('');
+    setStructGross(75000);
+    setIsNewStructureModalOpen(true);
+  };
+
+  const handleSaveStructure = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingStruct) return;
     const gross = Number(structGross) || editingStruct.grossMonthly;
     const basic = Math.round(gross * 0.5);
     const hra = Math.round(gross * 0.25);
     const special = gross - basic - hra;
-    db.saveSalaryStructure({
+    const updated: SalaryStructure = {
       ...editingStruct,
       name: structName.trim(),
       description: structDesc.trim(),
@@ -179,8 +189,56 @@ export const PayrollDashboard: React.FC<PayrollDashboardProps> = ({ navContext, 
         { componentId: 'COMP-HRA', componentName: 'House Rent Allowance (HRA)', componentCode: 'HRA', type: 'Earning', amountMonthly: hra, amountAnnual: hra * 12 },
         { componentId: 'COMP-SPEC', componentName: 'Special & Flexi Allowance', componentCode: 'SPECIAL', type: 'Earning', amountMonthly: special, amountAnnual: special * 12 }
       ]
-    });
+    };
+    db.saveSalaryStructure(updated);
+    try {
+      await payrollApi.createSalaryStructure(updated);
+    } catch {
+      // Synced to local DB, silent backend fallback
+    }
     setEditingStruct(null);
+  };
+
+  const handleCreateStructure = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!structName.trim()) return;
+    const gross = Number(structGross) || 50000;
+    const basic = Math.round(gross * 0.5);
+    const hra = Math.round(gross * 0.25);
+    const special = gross - basic - hra;
+    const newId = `STR-${Date.now().toString().slice(-6)}`;
+    const newStruct: SalaryStructure = {
+      id: newId,
+      name: structName.trim(),
+      description: structDesc.trim(),
+      grossMonthly: gross,
+      ctcAnnual: gross * 12,
+      items: [
+        { componentId: 'COMP-BASIC', componentName: 'Basic Salary', componentCode: 'BASIC', type: 'Earning', amountMonthly: basic, amountAnnual: basic * 12 },
+        { componentId: 'COMP-HRA', componentName: 'House Rent Allowance (HRA)', componentCode: 'HRA', type: 'Earning', amountMonthly: hra, amountAnnual: hra * 12 },
+        { componentId: 'COMP-SPEC', componentName: 'Special Allowance', componentCode: 'SPECIAL', type: 'Earning', amountMonthly: special, amountAnnual: special * 12 }
+      ],
+      isActive: true
+    };
+    db.saveSalaryStructure(newStruct);
+    try {
+      await payrollApi.createSalaryStructure(newStruct);
+    } catch {
+      // Synced to local DB, silent backend fallback
+    }
+    setNotice(`Salary structure "${newStruct.name}" successfully created and saved to database.`);
+    setIsNewStructureModalOpen(false);
+  };
+
+  const handleDeleteStructure = async (s: SalaryStructure) => {
+    if (!window.confirm(`Are you sure you want to delete salary structure "${s.name}"?`)) return;
+    try {
+      await payrollApi.deleteSalaryStructure(s.id);
+    } catch (err: any) {
+      console.warn('Backend structure delete error:', err);
+    }
+    db.deleteSalaryStructure(s.id);
+    setNotice(`Salary structure "${s.name}" deleted successfully.`);
   };
 
   // Run columns
@@ -554,8 +612,19 @@ export const PayrollDashboard: React.FC<PayrollDashboardProps> = ({ navContext, 
               <span>Payroll & Statutory Policies →</span>
             </button>
           )}
-          <ExportButton data={exportData} fileName={canViewRuns ? 'Orbyx_Payroll_Register' : `Orbyx_My_Payslips_${currentUser.employeeId}`} />
-          {isHR && canProcessPayroll() && (
+          {activeTab === 'structures' && isHR && (
+            <button
+              onClick={openNewStructure}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add Salary Structure</span>
+            </button>
+          )}
+          {activeTab !== 'structures' && (
+            <ExportButton data={exportData} fileName={canViewRuns ? 'Celestial_Payroll_Register' : `Celestial_My_Payslips_${currentUser.employeeId}`} />
+          )}
+          {activeTab !== 'structures' && isHR && canProcessPayroll() && (
             <button
               onClick={() => setIsProcessModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
@@ -645,12 +714,21 @@ export const PayrollDashboard: React.FC<PayrollDashboardProps> = ({ navContext, 
                   <p className="text-[11px] text-slate-500">{s.description}</p>
                 </div>
                 {isHR && (
-                  <button
-                    onClick={() => openEditStructure(s)}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded"
-                  >
-                    <Edit3 className="h-3 w-3" /> Edit
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => openEditStructure(s)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded"
+                    >
+                      <Edit3 className="h-3 w-3" /> Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteStructure(s)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded"
+                      title="Delete Structure"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
                 )}
               </div>
               <div className="flex justify-between items-baseline pt-1">
@@ -671,6 +749,102 @@ export const PayrollDashboard: React.FC<PayrollDashboardProps> = ({ navContext, 
               </div>
             </div>
           ))}
+
+          {isHR && (
+            <button
+              onClick={openNewStructure}
+              className="border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-xl p-5 flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50/30 transition-all min-h-[220px]"
+            >
+              <div className="h-10 w-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                <Plus className="h-5 w-5" />
+              </div>
+              <span className="font-semibold text-xs">Add New Salary Structure</span>
+              <span className="text-[10px] text-slate-400 text-center max-w-[200px]">Define new monthly gross, basic, HRA and flexi components</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* New Salary Structure Modal */}
+      {isNewStructureModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <form
+            onSubmit={handleCreateStructure}
+            className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-3 text-xs"
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h4 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Plus className="h-4 w-4 text-indigo-600" />
+                <span>Create Salary Structure</span>
+              </h4>
+              <span className="text-[10px] font-mono uppercase bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-bold">
+                Database API
+              </span>
+            </div>
+            <label className="block font-semibold text-slate-700">
+              Structure Name *
+              <input
+                required
+                placeholder="e.g. Junior DevOps Engineer (CTC ₹6.5L)"
+                value={structName}
+                onChange={(e) => setStructName(e.target.value)}
+                className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs"
+              />
+            </label>
+            <label className="block font-semibold text-slate-700">
+              Description
+              <input
+                placeholder="Target roles, seniority band and allowances"
+                value={structDesc}
+                onChange={(e) => setStructDesc(e.target.value)}
+                className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs"
+              />
+            </label>
+            <label className="block font-semibold text-slate-700">
+              Monthly Gross Salary (₹) *
+              <input
+                required
+                type="number"
+                min="5000"
+                step="1000"
+                value={structGross}
+                onChange={(e) => setStructGross(Number(e.target.value))}
+                className="mt-1 w-full px-3 py-1.5 border border-slate-200 rounded-lg font-mono text-xs"
+              />
+              <span className="text-[11px] text-slate-400 block mt-1">
+                Auto-derives standard statutory slabs: 50% Basic (PF-eligible), 25% HRA, 25% Special Allowance.
+              </span>
+            </label>
+            <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1 text-[11px] font-mono">
+              <div className="flex justify-between text-slate-600">
+                <span>Calculated Basic:</span>
+                <span className="font-semibold text-slate-900">₹{Math.round(structGross * 0.5).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Calculated HRA:</span>
+                <span className="font-semibold text-slate-900">₹{Math.round(structGross * 0.25).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Annual CTC:</span>
+                <span className="font-bold text-indigo-700">₹{(structGross * 12).toLocaleString()}</span>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsNewStructureModalOpen(false)}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-xs"
+              >
+                Save to Database
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

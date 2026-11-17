@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, resetToSeedData, subscribeToDB } from '../../db/storage';
 import { useAuth } from '../../services/authContext';
+import { authApi } from '../../services/authApi';
 import {
   AuditLog,
   CurrentUser,
@@ -17,14 +18,12 @@ import {
   History,
   Check,
   ShieldAlert,
-  ShieldCheck,
   BookOpen,
   RotateCcw,
   KeyRound,
   Plus,
   XCircle
 } from 'lucide-react';
-import { SecurityTestRunner } from './SecurityTestRunner';
 
 interface CompanySettingsProps {
   navContext?: NavigationContext;
@@ -42,15 +41,53 @@ const DELEGABLE_ACTIONS_LIST: { id: DelegableAction; label: string }[] = [
 
 export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) => {
   const { currentUser, canManageOrganization, allPersonas } = useAuth();
-  const availableUsers: CurrentUser[] = allPersonas;
+  const [liveUsers, setLiveUsers] = useState<any[]>([]);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const isSuperAdmin = currentUser.role === 'super_admin' || currentUser.role === 'admin';
+
+  const fetchUsers = async () => {
+    try {
+      const users = await authApi.listUsers();
+      if (Array.isArray(users) && users.length > 0) {
+        setLiveUsers(users);
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleRoleChange = async (userId: string, newRole: string) => {
+    setUpdatingUserId(userId);
+    try {
+      const res = await authApi.updateUserRole(userId, newRole);
+      if (res.success) {
+        setLiveUsers((prev) =>
+          prev.map((u) => (u.id === userId ? { ...u, role: newRole, roleCode: newRole } : u))
+        );
+        setSaveSuccess(`Role successfully updated to "${newRole}" in authentication database.`);
+        setTimeout(() => setSaveSuccess(''), 4000);
+      } else {
+        alert(res.error || 'Failed to update user role');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error updating user role');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
+
+  const availableUsers: any[] = liveUsers.length > 0 ? liveUsers : allPersonas;
   const [activeTab, setActiveTab] = useState<
-    'users_rbac' | 'delegations' | 'preferences' | 'policies' | 'audit' | 'security_audit'
+    'users_rbac' | 'delegations' | 'preferences' | 'policies' | 'audit'
   >(() => {
     if (navContext?.subTab === 'audit') return 'audit';
     if (navContext?.subTab === 'delegations') return 'delegations';
     if (navContext?.subTab === 'preferences') return 'preferences';
     if (navContext?.subTab === 'policies') return 'policies';
-    if (navContext?.subTab === 'security_audit') return 'security_audit';
     return 'users_rbac';
   });
 
@@ -357,18 +394,7 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
           <History className="h-4 w-4" />
           <span>System Audit Log ({auditLogs.length})</span>
         </button>
-        <button
-          onClick={() => setActiveTab('security_audit')}
-          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
-            activeTab === 'security_audit'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <ShieldCheck className="h-4 w-4" />
-          <span>Security & Privacy Audit (10 Tests)</span>
-        </button>
-      </div>
+        </div>
 
       {/* Tab 1: Users & RBAC Matrix */}
       {activeTab === 'users_rbac' && (
@@ -394,36 +420,64 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                     <th className="p-2.5">Designation</th>
                     <th className="p-2.5">Assigned System Role</th>
                     <th className="p-2.5">Account Classification & Scope</th>
+                    {isSuperAdmin && <th className="p-2.5 text-right">Assign Role (Super Admin)</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {availableUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50">
-                      <td className="p-2.5 font-semibold text-slate-900 flex items-center gap-2">
-                        <img src={u.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover" />
-                        <div>
-                          <span>{u.name}</span>
-                          <span className="block text-[10px] font-mono text-slate-400">{u.employeeId}</span>
-                        </div>
-                      </td>
-                      <td className="p-2.5 font-mono text-slate-600">{u.email}</td>
-                      <td className="p-2.5 text-slate-700">{u.designationTitle}</td>
-                      <td className="p-2.5">
-                        <span className="px-2 py-0.5 rounded font-mono text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="p-2.5 text-slate-600">
-                        {u.role === 'senior_manager'
-                          ? 'Managing Director (MD) - Executive Oversight & Final Approvals'
-                          : u.role === 'hr_admin'
-                            ? 'Full Organization, Policy & Confidential Payroll'
-                            : u.role === 'reporting_manager'
-                              ? 'Direct Reports + Self-Service'
-                              : 'Self-Service + Public Colleague Contact Card'}
-                      </td>
-                    </tr>
-                  ))}
+                  {availableUsers.map((u) => {
+                    const currentRole = u.role || u.roleCode || 'employee';
+                    const avatar = u.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.username || u.name || u.email)}&background=4f46e5&color=fff&size=256`;
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-50">
+                        <td className="p-2.5 font-semibold text-slate-900 flex items-center gap-2">
+                          <img src={avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
+                          <div>
+                            <span>{u.username || u.name || u.email.split('@')[0]}</span>
+                            <span className="block text-[10px] font-mono text-slate-400">{u.employeeId || 'ID: External'}</span>
+                          </div>
+                        </td>
+                        <td className="p-2.5 font-mono text-slate-600">{u.email}</td>
+                        <td className="p-2.5 text-slate-700">{u.designationTitle || (currentRole === 'super_admin' ? 'Super Administrator' : 'Staff')}</td>
+                        <td className="p-2.5">
+                          <span className={`px-2 py-0.5 rounded font-mono text-[11px] font-semibold ${
+                            currentRole === 'super_admin' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                            currentRole === 'hr_admin' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+                            currentRole === 'senior_manager' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                            'bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}>
+                            {currentRole}
+                          </span>
+                        </td>
+                        <td className="p-2.5 text-slate-600">
+                          {currentRole === 'super_admin'
+                            ? 'Root Administrator - System security, User Roles & Organization Config'
+                            : currentRole === 'senior_manager'
+                            ? 'Managing Director (MD) - Executive Oversight & Final Approvals'
+                            : currentRole === 'hr_admin'
+                            ? 'Full Organization, Policy, Business Modules & Confidential Payroll'
+                            : currentRole === 'reporting_manager'
+                            ? 'Direct Reports + Self-Service'
+                            : 'Self-Service + Directory Access'}
+                        </td>
+                        {isSuperAdmin && (
+                          <td className="p-2.5 text-right">
+                            <select
+                              value={currentRole}
+                              disabled={updatingUserId === u.id || u.email === currentUser.email}
+                              onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                              className="text-xs px-2 py-1 rounded border border-slate-200 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 cursor-pointer"
+                            >
+                              <option value="super_admin">Super Administrator</option>
+                              <option value="hr_admin">HR Administrator</option>
+                              <option value="senior_manager">Senior Management (MD)</option>
+                              <option value="reporting_manager">Reporting Manager</option>
+                              <option value="employee">Employee</option>
+                            </select>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -831,7 +885,7 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                 <option value="ASSET">Asset</option>
                 <option value="SYSTEM">System</option>
               </select>
-              <ExportButton data={exportAudit} fileName="Orbyx_System_Audit_Log" />
+              <ExportButton data={exportAudit} fileName="Celestial_System_Audit_Log" />
             </div>
           </div>
 
@@ -843,8 +897,6 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
         </div>
       )}
 
-      {/* Tab 6: Security & Privacy Audit */}
-      {activeTab === 'security_audit' && <SecurityTestRunner />}
-    </div>
+      </div>
   );
 };

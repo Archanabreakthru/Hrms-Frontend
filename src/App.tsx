@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AuthProvider, useAuth } from './services/authContext';
 import { LoginPage } from './components/auth/LoginPage';
+import { AccountActivationPage } from './components/auth/AccountActivationPage';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { DashboardHub } from './components/dashboard/DashboardHub';
@@ -54,9 +55,18 @@ function MainApp() {
     return window.location.hash.startsWith('#client-portal');
   });
 
+  const [isActivation, setIsActivation] = useState<boolean>(() => {
+    const hash = window.location.hash || '';
+    const path = window.location.pathname || '';
+    return hash.startsWith('#activate') || hash.startsWith('#/activate') || path.startsWith('/activate');
+  });
+
   useEffect(() => {
     const handleHash = () => {
-      setIsClientPortal(window.location.hash.startsWith('#client-portal'));
+      const hash = window.location.hash || '';
+      const path = window.location.pathname || '';
+      setIsClientPortal(hash.startsWith('#client-portal') || hash.startsWith('#/client-portal'));
+      setIsActivation(hash.startsWith('#activate') || hash.startsWith('#/activate') || path.startsWith('/activate'));
     };
     window.addEventListener('hashchange', handleHash);
     window.addEventListener('popstate', handleHash);
@@ -190,6 +200,19 @@ function MainApp() {
         );
     }
   };
+
+  // Account Activation Route
+  if (isActivation) {
+    return (
+      <AccountActivationPage
+        onReturnToLogin={() => {
+          setIsActivation(false);
+          window.location.hash = '';
+          navigateTo('dashboard');
+        }}
+      />
+    );
+  }
 
   if (isClientPortal) {
     return (

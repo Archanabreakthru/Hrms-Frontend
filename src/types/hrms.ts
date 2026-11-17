@@ -54,6 +54,7 @@ export interface CompanyProfile {
   id: string;
   name: string;
   legalEntity: string;
+  logoUrl?: string;
   registrationNumber?: string; // CIN / Incorporation Number
   incorporatedDate?: string; // Incorporation Date YYYY-MM-DD
   taxId: string; // PAN / Tax Identifier
@@ -347,6 +348,9 @@ export interface Employee {
   employmentType: EmploymentType;
   status: EmploymentStatus;
   profileStatus?: 'Draft' | 'Profile Incomplete' | 'Pending Verification' | 'Active' | 'Inactive';
+  accountStatus?: 'ACTIVE' | 'PENDING_ACTIVATION' | 'SUSPENDED' | 'DISABLED' | 'TERMINATED';
+  invitationStatus?: 'PENDING_INVITE' | 'SENT' | 'ACCEPTED' | 'FAILED' | 'EXPIRED' | 'NOT_REQUIRED';
+  invitationSentAt?: string;
   employeeCategory?: string;
   probationPeriodDays?: number;
   dateOfJoining: string;
@@ -744,7 +748,7 @@ export interface AttendanceRecord {
   clientVerificationStatus?: ClientVerificationStatus;
   companyApprovalStatus?: CompanyApprovalStatus;
   payrollEligibilityStatus?: PayrollEligibilityStatus;
-  // External Client Supervisor Email Verification (No Orbyx Login)
+  // External Client Supervisor Email Verification (No Celestial Login)
   clientSupervisorName?: string;
   clientSupervisorEmail?: string;
   clientVerifiedAt?: string;
@@ -873,6 +877,7 @@ export interface CurrentUser {
   employeeId: string;
   name: string;
   email: string;
+  username?: string;
   role: UserRole;
   departmentId: string;
   designationTitle: string;

@@ -90,7 +90,7 @@ const ALLOWED_INTERNAL_ROLES = new Set(['employee', 'reporting_manager', 'hr_adm
 export const permissionService = {
   /**
    * Section 3 Strict Access Control:
-   * Orbyx HRMS is strictly an internal company HRMS.
+   * Celestial HRMS is strictly an internal company HRMS.
    * Rejects any external client supervisor, client manager, client HR, or non-company account.
    */
   isInternalCompanyUser(user: Partial<CurrentUser> | null | undefined): boolean {
@@ -124,13 +124,13 @@ export const permissionService = {
       return {
         allowed: false,
         reason:
-          'Access Denied: Orbyx HRMS is strictly restricted to internal company personnel. External client supervisors and client staff do not have login accounts and must verify attendance via external email confirmation.'
+          'Access Denied: Celestial HRMS is strictly restricted to internal company personnel. External client supervisors and client staff do not have login accounts and must verify attendance via external email confirmation.'
       };
     }
     if (!this.isInternalCompanyUser(candidate)) {
       return {
         allowed: false,
-        reason: 'Access Denied: User does not match an active internal Orbyx employee record or permitted internal role.'
+        reason: 'Access Denied: User does not match an active internal Celestial employee record or permitted internal role.'
       };
     }
     return { allowed: true };
@@ -601,8 +601,11 @@ export const permissionService = {
    * Serializes directory rows for the requesting user.
    * Deactivated / Inactive employees are removed from regular active directory listings.
    */
-  getAuthorizedDirectoryRows(currentUser: CurrentUser): (BasicDirectoryEmployee | (Employee & { isDirectReport?: boolean }))[] {
-    const all = db.getEmployees();
+  getAuthorizedDirectoryRows(
+    currentUser: CurrentUser,
+    employeeList?: Employee[]
+  ): (BasicDirectoryEmployee | (Employee & { isDirectReport?: boolean }))[] {
+    const all = employeeList || db.getEmployees();
     const activeEmployees = all.filter((e) => e.status !== 'Inactive' && e.status !== 'Separated');
 
     if (currentUser.role === 'employee') {
@@ -619,7 +622,7 @@ export const permissionService = {
     }
 
     if (currentUser.role === 'reporting_manager') {
-      // Reporting Manager (Krishnaraj) sees detailed rows for their 8 direct reports, basic directory for other active employees
+      // Reporting Manager (Krishnaraj) sees detailed rows for their direct reports, basic directory for other active employees
       return activeEmployees.map((e) => {
         const isReport = e.reportingManagerId === currentUser.employeeId;
         if (isReport || e.id === currentUser.employeeId) {
@@ -663,8 +666,8 @@ export const permissionService = {
   /**
    * Generates sanitized CSV export records according to user authorization.
    */
-  getAuthorizedDirectoryExport(currentUser: CurrentUser): Record<string, any>[] {
-    const rows = this.getAuthorizedDirectoryRows(currentUser);
+  getAuthorizedDirectoryExport(currentUser: CurrentUser, employeeList?: Employee[]): Record<string, any>[] {
+    const rows = this.getAuthorizedDirectoryRows(currentUser, employeeList);
     const departments = db.getDepartments();
     const designations = db.getDesignations();
     const branches = db.getBranches();

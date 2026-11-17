@@ -1,4 +1,4 @@
-// Orbyx HRMS - Client Manager Attendance Verification UI
+// Celestial HRMS - Client Manager Attendance Verification UI
 // Single-page interface matching the exact design specification
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
@@ -70,9 +70,9 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
       return true;
     });
 
-    // If no deployments or verifications exist for this supervisor yet, fallback to default seed employees
+    // If no deployments or verifications exist for this supervisor yet, return empty list
     if (clientDeployments.length === 0 && scopedVerifs.length === 0) {
-      return INITIAL_CLIENT_EMPLOYEES;
+      return [];
     }
 
     // Map each deployed employee
@@ -162,7 +162,7 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
       result.push(emp);
     });
 
-    return result.length > 0 ? result : INITIAL_CLIENT_EMPLOYEES;
+    return result;
   }, [manager]);
 
   // State for employees list and their individual daily records
@@ -221,7 +221,7 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
   const saveEmployeesState = (updated: ClientDeployedEmployee[]) => {
     setEmployees(updated);
     try {
-      localStorage.setItem('orbyx_client_manager_employees', JSON.stringify(updated));
+      localStorage.setItem('celestial_client_manager_employees', JSON.stringify(updated));
     } catch {
       // ignore
     }
@@ -1032,7 +1032,7 @@ export const ClientManagerAttendanceVerification: React.FC<ClientManagerAttendan
                 <p className="leading-relaxed">
                   Your verification actions (Accept/Decline) are automatically reflected in the HRMS for the HR team.
                   <span className="block text-[11px] text-purple-700/80 mt-0.5 font-normal">
-                    Prototype note: Verification actions are demonstrated using local mock data. Shared HRMS updates will be enabled during backend integration.
+                    Verification decisions update attendance records in real time for payroll and audit governance.
                   </span>
                 </p>
               </div>

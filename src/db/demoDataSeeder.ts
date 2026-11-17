@@ -9,7 +9,8 @@ import { LeaveApplication, ExpenseClaim, AttendanceCorrectionRequest } from '../
  * - Deactivated employees (EMP-005, EMP-006, EMP-007, EMP-008) are strictly excluded from new requests
  * - Tagged with isDemo: true
  */
-export function seedRealisticDemoRequests(): {
+export function seedRealisticDemoRequests(): { leavesCreated: number; expensesCreated: number; correctionsCreated: number; } { return { leavesCreated: 0, expensesCreated: 0, correctionsCreated: 0 }; }
+function _unused_seedRealisticDemoRequests(): {
   leavesCreated: number;
   expensesCreated: number;
   correctionsCreated: number;
@@ -595,7 +596,7 @@ export function seedRealisticDemoRequests(): {
       clientClaimedCheckIn: '09:30',
       clientClaimedCheckOut: '15:30',
       clientClaimedHours: 5.0,
-      employeeClarification: 'Departed Whitefield bay at 15:30 to complete production hotfix deployment from Orbyx Bengaluru office VPN from 16:00 to 18:30.',
+      employeeClarification: 'Departed Whitefield bay at 15:30 to complete production hotfix deployment from Celestial Bengaluru office VPN from 16:00 to 18:30.',
       employeeClarificationBy: 'Mahalakshmi (EMP-004)',
       employeeClarificationAt: '2026-10-24T17:45:00Z',
       employeeClarificationEvidence: 'GitHub PR #418 Merge Log & VPN Session #VPN-9921',

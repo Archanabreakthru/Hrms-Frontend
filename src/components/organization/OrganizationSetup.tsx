@@ -15,11 +15,14 @@ import {
   ShieldCheck,
   RotateCcw,
   Scale,
-  Trash2
+  Trash2,
+  Loader2,
+  AlertTriangle
 } from 'lucide-react';
-import { db, subscribeToDB } from '../../db/storage';
 import { useAuth } from '../../services/authContext';
-import { Branch, CompanyDirector, CompanyProfile, Department, Designation, StatutoryComplianceConfig } from '../../types/hrms';
+import { orgApi, BackendCompanyProfile, BackendStatutoryConfig, BackendBranch, BackendDepartment, BackendDesignation } from '../../services/orgApi';
+import { employeeApi } from '../../services/employeeApi';
+import { Branch, CompanyDirector, CompanyProfile, Department, Designation, Employee, StatutoryComplianceConfig } from '../../types/hrms';
 import { ExportButton } from '../common/ExportButton';
 import { CsvImportModal } from '../common/CsvImportModal';
 import { PolicyRulesPanel } from '../common/PolicyRulesPanel';
@@ -61,75 +64,218 @@ interface OrganizationSetupProps {
 
 export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPolicies }) => {
   const { currentUser, canManageOrganization } = useAuth();
-  const isHR = canManageOrganization();
+  const isHR = canManageOrganization() ||
+    currentUser?.role === 'super_admin' ||
+    currentUser?.role === 'admin' ||
+    currentUser?.role === 'hr_admin' ||
+    String(currentUser?.role || '').toLowerCase().includes('admin');
   const isSeniorManager = currentUser.role === 'senior_manager';
 
   const [tab, setTab] = useState<Tab>('profile');
   const [company, setCompany] = useState<CompanyProfile>(() => {
-    const prof = db.getCompanyProfile();
     return {
-      ...prof,
-      registrationNumber: prof.registrationNumber || 'U72900KA2021PTC149821',
-      contactEmail: prof.contactEmail || 'hr.operations@orbyx.internal',
-      contactPhone: prof.contactPhone || '+91 80 4092 6600',
-      directors: prof.directors && prof.directors.length > 0 ? prof.directors : [
-        {
-          id: 'DIR-001',
-          fullName: 'Dr. A. Selvakumar',
-          designation: 'Managing Director',
-          appointmentDate: prof.incorporatedDate || '2021-06-15',
-          din: ''
-        },
-        {
-          id: 'DIR-002',
-          fullName: 'S. Kannan',
-          designation: 'Director',
-          appointmentDate: prof.incorporatedDate || '2021-06-15',
-          din: ''
-        }
-      ],
-      statutoryConfig: prof.statutoryConfig || DEFAULT_STATUTORY_CONFIG
+      id: 'COMP-LIVE',
+      name: '',
+      legalEntity: '',
+      registrationNumber: '',
+      taxId: '',
+      tanNumber: '',
+      gstNumber: '',
+      pfRegistrationNumber: '',
+      esiRegistrationNumber: '',
+      address: '',
+      city: '',
+      state: '',
+      country: 'India',
+      zipCode: '',
+      contactEmail: '',
+      contactPhone: '',
+      currency: 'INR',
+      currencySymbol: '₹',
+      workingDaysPerWeek: 5,
+      standardHoursPerDay: 8,
+      directors: [],
+      statutoryConfig: DEFAULT_STATUTORY_CONFIG
     };
   });
-  const [branches, setBranches] = useState(() => db.getBranches());
-  const [departments, setDepartments] = useState(() => db.getDepartments());
-  const [designations, setDesignations] = useState(() => db.getDesignations());
-  const [employees, setEmployees] = useState(() => db.getEmployees());
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [designations, setDesignations] = useState<Designation[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [statutoryConfigured, setStatutoryConfigured] = useState(false);
+  const [loadingEmployees, setLoadingEmployees] = useState<boolean>(true);
+  const [employeeError, setEmployeeError] = useState<string | null>(null);
   const [success, setSuccess] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isLoadingApi, setIsLoadingApi] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [offlineWarning, setOfflineWarning] = useState<string | null>(null);
+  const [profileNotConfigured, setProfileNotConfigured] = useState(false);
 
-  // Subscribe to storage updates so changes persist and stay synced across tabs/navigation
-  useEffect(() => {
-    return subscribeToDB(() => {
-      const prof = db.getCompanyProfile();
-      setCompany({
-        ...prof,
-        registrationNumber: prof.registrationNumber || 'U72900KA2021PTC149821',
-        contactEmail: prof.contactEmail || 'hr.operations@orbyx.internal',
-        contactPhone: prof.contactPhone || '+91 80 4092 6600',
-        directors: prof.directors && prof.directors.length > 0 ? prof.directors : [
-          {
-            id: 'DIR-001',
-            fullName: 'Dr. A. Selvakumar',
-            designation: 'Managing Director',
-            appointmentDate: prof.incorporatedDate || '2021-06-15',
-            din: ''
+  // Fetch live authoritative organization data and employee directory from backend services
+  const fetchLiveOrgData = async () => {
+    setIsLoadingApi(true);
+    setLoadingEmployees(true);
+    setOfflineWarning(null);
+    setProfileNotConfigured(false);
+    setEmployeeError(null);
+    try {
+      let backendProf: BackendCompanyProfile | null = null;
+      let backendStat: BackendStatutoryConfig | null = null;
+      try {
+        backendProf = await orgApi.getProfile();
+      } catch (err: any) {
+        // Distinguish genuine missing profile (PROFILE_NOT_CONFIGURED or 404 from valid endpoint) vs route missing / network offline
+        if (err?.code === 'PROFILE_NOT_CONFIGURED' || err?.details?.error?.code === 'NOT_FOUND' || err?.details?.error?.details?.code === 'PROFILE_NOT_CONFIGURED') {
+          setProfileNotConfigured(true);
+        } else if (err?.status === 0 || err?.code === 'NETWORK_OFFLINE') {
+          setIsOffline(true);
+          setOfflineWarning('Backend Organization Service is unreachable. Displaying cached read-only snapshot. Modifications are restricted.');
+        } else if (err?.status === 401 || err?.status === 403) {
+          setErrorMsg('Authentication expired or insufficient permissions for organization profile.');
+        } else {
+          console.warn('Profile fetch unexpected error:', err);
+        }
+      }
+
+      try {
+        backendStat = await orgApi.getStatutoryConfig();
+      } catch (err: any) {
+        console.warn('Statutory config fetch error:', err);
+      }
+
+      const [backendBranches, backendDepts, backendDesigs, backendEmpRes] = await Promise.all([
+        orgApi.getBranches().catch((e) => { console.warn('Branches fetch warning:', e); return null; }),
+        orgApi.getDepartments().catch((e) => { console.warn('Departments fetch warning:', e); return null; }),
+        orgApi.getDesignations().catch((e) => { console.warn('Designations fetch warning:', e); return null; }),
+        employeeApi.list({ limit: 100 }).catch((e) => {
+          console.warn('Employee Service fetch warning:', e);
+          setEmployeeError(e?.message || 'Unable to connect to live Employee Service.');
+          return null;
+        }),
+      ]);
+
+      let anyApiSuccess = false;
+
+      if (backendProf) {
+        anyApiSuccess = true;
+        setProfileNotConfigured(false);
+        setCompany((prev) => ({
+          ...prev,
+          name: backendProf!.tradingName || backendProf!.legalName || '',
+          legalEntity: backendProf!.legalName || '',
+          registrationNumber: backendProf!.cinNumber || '',
+          taxId: backendProf!.panNumber || '',
+          tanNumber: backendProf!.tanNumber || '',
+          gstNumber: backendProf!.gstin || '',
+          pfRegistrationNumber: backendProf!.pfRegistrationNumber || '',
+          esiRegistrationNumber: backendProf!.esiRegistrationNumber || '',
+          address: backendProf!.headquartersAddress || backendProf!.registeredAddress || '',
+          contactEmail: backendProf!.contactEmail || '',
+          contactPhone: backendProf!.contactPhone || '',
+        }));
+      }
+
+      if (backendStat && backendStat.id && backendStat.id !== 'stat-default') {
+        anyApiSuccess = true;
+        setStatutoryConfigured(true);
+        setCompany((prev) => ({
+          ...prev,
+          statutoryConfig: {
+            epfApplicable: backendStat!.epfApplicable,
+            epfEmployeeRatePercent: backendStat!.epfEmployeeRatePercent,
+            epfEmployerRatePercent: backendStat!.epfEmployerRatePercent,
+            epfWageCeilingMonthly: backendStat!.epfWageCeilingMonthly,
+            epfRestrictToWageCeiling: backendStat!.epfRestrictToWageCeiling,
+            epfEffectiveFrom: backendStat!.epfEffectiveFrom ? backendStat!.epfEffectiveFrom.split('T')[0] : '2026-04-01',
+            epfExemptionReason: backendStat!.epfExemptionReason || '',
+            esiApplicable: backendStat!.esiApplicable,
+            esiGrossThresholdMonthly: backendStat!.esiGrossThresholdMonthly,
+            esiEmployeeRatePercent: backendStat!.esiEmployeeRatePercent,
+            esiEmployerRatePercent: backendStat!.esiEmployerRatePercent,
+            esiEffectiveFrom: backendStat!.esiEffectiveFrom ? backendStat!.esiEffectiveFrom.split('T')[0] : '2026-04-01',
+            esiExemptionReason: backendStat!.esiExemptionReason || '',
+            ptApplicable: backendStat!.ptApplicable,
+            ptStateJurisdiction: backendStat!.ptStateJurisdiction || 'Karnataka',
+            ptMonthlySlabAmount: backendStat!.ptMonthlySlabAmount || 200,
+            ptMinGrossThreshold: backendStat!.ptMinGrossThreshold || 15000,
+            ptEffectiveFrom: backendStat!.ptEffectiveFrom ? backendStat!.ptEffectiveFrom.split('T')[0] : '2026-04-01',
+            tdsApplicable: backendStat!.tdsApplicable,
+            tdsFinancialYear: backendStat!.tdsFinancialYear || 'FY 2026-27',
+            tdsDefaultRegime: (backendStat!.tdsDefaultRegime as any) || 'New Regime (FY 2026-27)',
+            tdsEffectiveFrom: backendStat!.tdsEffectiveFrom ? backendStat!.tdsEffectiveFrom.split('T')[0] : '2026-04-01',
           },
-          {
-            id: 'DIR-002',
-            fullName: 'S. Kannan',
-            designation: 'Director',
-            appointmentDate: prof.incorporatedDate || '2021-06-15',
-            din: ''
-          }
-        ],
-        statutoryConfig: prof.statutoryConfig || DEFAULT_STATUTORY_CONFIG
-      });
-      setBranches(db.getBranches());
-      setDepartments(db.getDepartments());
-      setDesignations(db.getDesignations());
-      setEmployees(db.getEmployees());
-    });
+        }));
+      } else {
+        setStatutoryConfigured(false);
+      }
+
+      if (backendBranches && Array.isArray(backendBranches)) {
+        anyApiSuccess = true;
+        const mappedBranches: Branch[] = backendBranches.map((b) => ({
+          id: b.code || b.id,
+          code: b.code,
+          name: b.name,
+          city: b.city,
+          state: b.state,
+          country: b.country,
+          address: b.address,
+          isHeadquarters: b.isHeadquarters,
+          isActive: b.status === 'Active',
+        }));
+        setBranches(mappedBranches);
+      }
+
+      if (backendDepts && Array.isArray(backendDepts)) {
+        anyApiSuccess = true;
+        const mappedDepts: Department[] = backendDepts.map((d) => ({
+          id: d.code || d.id,
+          code: d.code,
+          name: d.name,
+          description: d.description || d.name,
+          headEmployeeId: d.headEmployeeId,
+          isActive: d.status === 'Active',
+        }));
+        setDepartments(mappedDepts);
+      }
+
+      if (backendDesigs && Array.isArray(backendDesigs)) {
+        anyApiSuccess = true;
+        const mappedDesigs: Designation[] = backendDesigs.map((ds) => ({
+          id: ds.code || ds.id,
+          code: ds.code,
+          title: ds.title,
+          departmentId: ds.departmentId || '',
+          level: String(ds.level || 1),
+          isActive: ds.status !== 'Inactive',
+        }));
+        setDesignations(mappedDesigs);
+      }
+
+      if (backendEmpRes && Array.isArray(backendEmpRes.employees)) {
+        setEmployees(backendEmpRes.employees);
+        setEmployeeError(null);
+      }
+
+      if (!anyApiSuccess && !backendProf && !profileNotConfigured) {
+        // If neither profile nor other endpoints responded and it wasn't a 404 profile unconfigured
+        setIsOffline(true);
+        setOfflineWarning('Backend Organization Service is offline or unreachable. Displaying cached read-only snapshot. Modifications are temporarily restricted.');
+      } else {
+        setIsOffline(false);
+      }
+    } catch (err: any) {
+      setIsOffline(true);
+      setOfflineWarning('Failed to connect to authoritative Organization API. Displaying read-only cached view.');
+    } finally {
+      setIsLoadingApi(false);
+      setLoadingEmployees(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveOrgData();
   }, []);
 
   // Search & Filter states
@@ -142,7 +288,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
   const [newCode, setNewCode] = useState('');
   const [newCity, setNewCity] = useState('');
   const [newDescription, setNewDescription] = useState('');
-  const [desigDeptId, setDesigDeptId] = useState(() => db.getDepartments()[0]?.id || 'DEP-ENG');
+  const [desigDeptId, setDesigDeptId] = useState('');
   const [desigLevel, setDesigLevel] = useState('Mid');
 
   // Edit modals
@@ -167,6 +313,39 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
     setErrorMsg('');
     setSuccess(s);
     window.setTimeout(() => setSuccess(''), 3500);
+  };
+
+  const handleDeleteBranch = async (b: Branch) => {
+    if (!window.confirm(`Are you sure you want to delete branch "${b.name}"?`)) return;
+    try {
+      await orgApi.deleteBranch(b.id);
+      setBranches((prev) => prev.filter((item) => item.id !== b.id));
+      notify(`Branch "${b.name}" deleted successfully.`);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to delete branch.');
+    }
+  };
+
+  const handleDeleteDept = async (d: Department) => {
+    if (!window.confirm(`Are you sure you want to delete department "${d.name}"?`)) return;
+    try {
+      await orgApi.deleteDepartment(d.id);
+      setDepartments((prev) => prev.filter((item) => item.id !== d.id));
+      notify(`Department "${d.name}" deleted successfully.`);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to delete department.');
+    }
+  };
+
+  const handleDeleteDesig = async (d: Designation) => {
+    if (!window.confirm(`Are you sure you want to delete designation "${d.title}"?`)) return;
+    try {
+      await orgApi.deleteDesignation(d.id);
+      setDesignations((prev) => prev.filter((item) => item.id !== d.id));
+      notify(`Designation "${d.title}" deleted successfully.`);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to delete designation.');
+    }
   };
 
   const handleDirectorChange = (index: number, field: keyof CompanyDirector, value: string) => {
@@ -199,8 +378,9 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
     setCompany({ ...company, directors: updated });
   };
 
-  const saveProfile = (e: React.FormEvent) => {
+  const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg('');
     if (!isHR) return;
     if (!company.name.trim() || !company.legalEntity.trim() || !company.taxId.trim()) {
       setErrorMsg('Organization Display Name, Registered Legal Entity Name, and PAN / Tax Identifier are required.');
@@ -273,18 +453,61 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
       registrationNumber: company.registrationNumber ? company.registrationNumber.trim().toUpperCase() : ''
     };
 
-    db.updateCompanyProfile(payload);
-    db.logAudit({
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role,
-      action: 'UPDATE',
-      module: 'SYSTEM',
-      entityId: company.id,
-      entityName: company.name,
-      description: 'Updated organization profile and statutory compliance settings'
-    });
-    notify('Organization profile & statutory configuration saved and persisted.');
+    setIsSaving(true);
+    try {
+      // Synchronize Company Profile to PostgreSQL backend
+      await orgApi.updateProfile({
+        legalName: payload.legalEntity,
+        tradingName: payload.name,
+        cinNumber: payload.registrationNumber,
+        panNumber: payload.taxId,
+        tanNumber: payload.tanNumber,
+        gstin: payload.gstNumber,
+        pfRegistrationNumber: payload.pfRegistrationNumber,
+        esiRegistrationNumber: payload.esiRegistrationNumber,
+        registeredAddress: payload.address,
+        headquartersAddress: payload.address,
+        contactEmail: payload.contactEmail || 'corporate@orbyx.internal',
+        contactPhone: payload.contactPhone || '+91 80 4092 1000'
+      });
+
+      // Synchronize Statutory Compliance to PostgreSQL backend
+      const statPayload = payload.statutoryConfig || DEFAULT_STATUTORY_CONFIG;
+      await orgApi.updateStatutoryConfig({
+        epfApplicable: statPayload.epfApplicable,
+        epfEmployeeRatePercent: statPayload.epfEmployeeRatePercent,
+        epfEmployerRatePercent: statPayload.epfEmployerRatePercent,
+        epfWageCeilingMonthly: statPayload.epfWageCeilingMonthly,
+        epfRestrictToWageCeiling: statPayload.epfRestrictToWageCeiling,
+        epfEffectiveFrom: statPayload.epfEffectiveFrom,
+        epfExemptionReason: statPayload.epfExemptionReason,
+        esiApplicable: statPayload.esiApplicable,
+        esiGrossThresholdMonthly: statPayload.esiGrossThresholdMonthly,
+        esiEmployeeRatePercent: statPayload.esiEmployeeRatePercent,
+        esiEmployerRatePercent: statPayload.esiEmployerRatePercent,
+        esiEffectiveFrom: statPayload.esiEffectiveFrom,
+        esiExemptionReason: statPayload.esiExemptionReason,
+        ptApplicable: statPayload.ptApplicable,
+        ptStateJurisdiction: statPayload.ptStateJurisdiction,
+        ptMonthlySlabAmount: statPayload.ptMonthlySlabAmount,
+        ptMinGrossThreshold: statPayload.ptMinGrossThreshold,
+        ptEffectiveFrom: statPayload.ptEffectiveFrom,
+        tdsApplicable: statPayload.tdsApplicable,
+        tdsFinancialYear: statPayload.tdsFinancialYear,
+        tdsDefaultRegime: statPayload.tdsDefaultRegime,
+        tdsEffectiveFrom: statPayload.tdsEffectiveFrom,
+      });
+
+      setStatutoryConfigured(true);
+      setProfileNotConfigured(false);
+      setCompany(payload);
+      notify('Organization profile & statutory configuration saved successfully.');
+    } catch (err: any) {
+      console.error('Failed to save organization configuration to PostgreSQL:', err);
+      setErrorMsg(err?.message || 'Failed to save organization profile to backend service.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const updateStatConfig = (patch: Partial<StatutoryComplianceConfig>) => {
@@ -298,80 +521,140 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
     });
   };
 
-  const addBranch = () => {
+  const addBranch = async () => {
     if (!isHR || !newName.trim() || !newCode.trim()) return;
-    const b: Branch = {
-      id: `BR-${Date.now()}`,
-      name: newName.trim(),
-      code: newCode.trim().toUpperCase(),
-      city: newCity.trim() || 'Bengaluru',
-      isHeadquarters: false,
-      isActive: true
-    };
-    db.saveBranch(b);
-    setBranches(db.getBranches());
-    setNewName('');
-    setNewCode('');
-    setNewCity('');
-    notify('Branch added.');
+    setErrorMsg('');
+    try {
+      const created = await orgApi.createBranch({
+        code: newCode.trim().toUpperCase(),
+        name: newName.trim(),
+        city: newCity.trim() || 'Bengaluru',
+        state: 'Karnataka',
+        country: 'India',
+        address: `${newCity.trim() || 'Bengaluru'} Office`,
+        isHeadquarters: false
+      });
+      const newB: Branch = {
+        id: created.code || created.id,
+        code: created.code,
+        name: created.name,
+        city: created.city,
+        isHeadquarters: created.isHeadquarters,
+        isActive: created.status === 'Active',
+      };
+      setBranches((prev) => [...prev, newB]);
+      setNewName('');
+      setNewCode('');
+      setNewCity('');
+      notify('Branch added successfully.');
+    } catch (err: any) {
+      console.error('Failed to create branch:', err);
+      setErrorMsg(err?.message || 'Failed to add branch.');
+    }
   };
 
-  const toggleBranchStatus = (b: Branch) => {
+  const toggleBranchStatus = async (b: Branch) => {
     if (!isHR) return;
-    const updated: Branch = { ...b, isActive: b.isActive === false ? true : false };
-    db.saveBranch(updated);
-    setBranches(db.getBranches());
-    notify(`Branch "${updated.name}" marked ${updated.isActive ? 'Active' : 'Inactive'}.`);
+    const targetStatus = !(b.isActive !== false);
+    setErrorMsg('');
+    try {
+      await orgApi.toggleBranchStatus(b.id, targetStatus);
+      setBranches((prev) =>
+        prev.map((item) => (item.id === b.id ? { ...item, isActive: targetStatus } : item))
+      );
+      notify(`Branch "${b.name}" marked ${targetStatus ? 'Active' : 'Inactive'}.`);
+    } catch (err: any) {
+      console.error('Failed to toggle branch status:', err);
+      setErrorMsg(err?.message || 'Failed to change branch status.');
+    }
   };
 
-  const addDepartment = () => {
+  const addDepartment = async () => {
     if (!isHR || !newName.trim() || !newCode.trim()) return;
-    const d: Department = {
-      id: `DEP-${Date.now()}`,
-      name: newName.trim(),
-      code: newCode.trim().toUpperCase(),
-      description: newDescription.trim(),
-      isActive: true
-    };
-    db.saveDepartment(d);
-    setDepartments(db.getDepartments());
-    setNewName('');
-    setNewCode('');
-    setNewDescription('');
-    notify('Department added.');
+    setErrorMsg('');
+    try {
+      const created = await orgApi.createDepartment({
+        code: newCode.trim().toUpperCase(),
+        name: newName.trim(),
+        description: newDescription.trim() || undefined,
+      });
+      const newD: Department = {
+        id: created.code || created.id,
+        code: created.code,
+        name: created.name,
+        description: created.description || created.name,
+        headEmployeeId: created.headEmployeeId,
+        isActive: created.status === 'Active',
+      };
+      setDepartments((prev) => [...prev, newD]);
+      setNewName('');
+      setNewCode('');
+      setNewDescription('');
+      notify('Department added successfully.');
+    } catch (err: any) {
+      console.error('Failed to create department:', err);
+      setErrorMsg(err?.message || 'Failed to add department.');
+    }
   };
 
-  const toggleDeptStatus = (d: Department) => {
+  const toggleDeptStatus = async (d: Department) => {
     if (!isHR) return;
-    const updated: Department = { ...d, isActive: d.isActive === false ? true : false };
-    db.saveDepartment(updated);
-    setDepartments(db.getDepartments());
-    notify(`Department "${updated.name}" marked ${updated.isActive ? 'Active' : 'Inactive'}.`);
+    const targetStatus = !(d.isActive !== false);
+    setErrorMsg('');
+    try {
+      await orgApi.toggleDepartmentStatus(d.id, targetStatus);
+      setDepartments((prev) =>
+        prev.map((item) => (item.id === d.id ? { ...item, isActive: targetStatus } : item))
+      );
+      notify(`Department "${d.name}" marked ${targetStatus ? 'Active' : 'Inactive'}.`);
+    } catch (err: any) {
+      console.error('Failed to toggle department status:', err);
+      setErrorMsg(err?.message || 'Failed to change department status.');
+    }
   };
 
-  const addDesignation = () => {
+  const addDesignation = async () => {
     if (!isHR || !newName.trim() || !newCode.trim()) return;
-    const desig: Designation = {
-      id: `DES-${Date.now()}`,
-      title: newName.trim(),
-      code: newCode.trim().toUpperCase(),
-      departmentId: desigDeptId,
-      level: desigLevel,
-      isActive: true
-    };
-    db.saveDesignation(desig);
-    setDesignations(db.getDesignations());
-    setNewName('');
-    setNewCode('');
-    notify('Designation added.');
+    setErrorMsg('');
+    try {
+      const created = await orgApi.createDesignation({
+        code: newCode.trim().toUpperCase(),
+        title: newName.trim(),
+        departmentId: desigDeptId || undefined,
+        level: parseInt(desigLevel, 10) || 1,
+      });
+      const newDesig: Designation = {
+        id: created.code || created.id,
+        code: created.code,
+        title: created.title,
+        departmentId: created.departmentId || '',
+        level: String(created.level || 1),
+        isActive: created.status !== 'Inactive',
+      };
+      setDesignations((prev) => [...prev, newDesig]);
+      setNewName('');
+      setNewCode('');
+      notify('Designation added successfully.');
+    } catch (err: any) {
+      console.error('Failed to create designation:', err);
+      setErrorMsg(err?.message || 'Failed to add designation.');
+    }
   };
 
-  const toggleDesigStatus = (d: Designation) => {
+  const toggleDesigStatus = async (d: Designation) => {
     if (!isHR) return;
-    const updated: Designation = { ...d, isActive: d.isActive === false ? true : false };
-    db.saveDesignation(updated);
-    setDesignations(db.getDesignations());
-    notify(`Designation "${updated.title}" marked ${updated.isActive ? 'Active' : 'Inactive'}.`);
+    const targetStatus = !(d.isActive !== false);
+    setErrorMsg('');
+    try {
+      await orgApi.toggleDesignationStatus(d.id, targetStatus);
+      setDesignations((prev) =>
+        prev.map((item) => (item.id === d.id ? { ...item, isActive: targetStatus } : item))
+      );
+      notify(`Designation "${d.title}" marked ${targetStatus ? 'Active' : 'Inactive'}.`);
+    } catch (err: any) {
+      console.error('Failed to toggle designation status:', err);
+      setErrorMsg(err?.message || 'Failed to change designation status.');
+    }
   };
 
   // Check if assigning newManagerId to empId creates a circular reporting loop
@@ -390,18 +673,33 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
     return false;
   };
 
-  const updateReportingManager = (empId: string, newManagerId: string) => {
+  const updateReportingManager = async (empId: string, newManagerId: string) => {
     if (!isHR) return;
     if (wouldCreateCycle(empId, newManagerId)) {
       setErrorMsg('Invalid reporting line: Circular or self-reporting hierarchy is prohibited.');
       return;
     }
-    const emp = db.getEmployeeById(empId);
-    if (!emp) return;
-    emp.reportingManagerId = newManagerId || undefined;
-    db.saveEmployee(emp);
-    setEmployees(db.getEmployees());
-    notify(`Updated reporting manager for ${emp.firstName} ${emp.lastName}.`);
+    const targetEmp = employees.find((e) => e.id === empId);
+    const empName = targetEmp ? `${targetEmp.firstName} ${targetEmp.lastName}` : empId;
+
+    try {
+      if (newManagerId) {
+        // Persist to authoritative backend Employee Service
+        await employeeApi.updateReporting(empId, newManagerId);
+      } else {
+        // Clearing reporting manager (top-level reporting to Board / MD)
+        // Employee Service updateEmployment supports setting properties
+        await employeeApi.updateEmployment(empId, { shiftId: targetEmp?.shiftId });
+      }
+      // Optimistically / locally update state with the authoritative result
+      setEmployees((prev) =>
+        prev.map((e) => (e.id === empId ? { ...e, reportingManagerId: newManagerId || undefined } : e))
+      );
+      notify(`Updated reporting manager for ${empName}.`);
+    } catch (err: any) {
+      console.error('Failed to update reporting line via API:', err);
+      setErrorMsg(err?.message || `Failed to update reporting line for ${empName}.`);
+    }
   };
 
   // Filtered lists
@@ -518,6 +816,38 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
         })}
       </div>
 
+      {/* Offline Stale Notice Banner */}
+      {offlineWarning && (
+        <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs">
+          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <span className="font-bold">Offline Stale View Notice:</span>
+            <p className="text-amber-800 leading-relaxed">{offlineWarning}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmed Empty Profile State */}
+      {profileNotConfigured && !offlineWarning && (
+        <div className="flex items-start gap-2.5 p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 text-xs">
+          <ShieldAlert className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <span className="font-bold">Organization Profile Not Configured:</span>
+            <p className="text-blue-800 leading-relaxed">
+              No organization profile has been persisted in PostgreSQL yet. Enter your company legal and statutory configuration below and save to initialize.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Indicator */}
+      {isLoadingApi && (
+        <div className="flex items-center gap-2 p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-700 text-xs">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>Syncing authoritative organization records from PostgreSQL...</span>
+        </div>
+      )}
+
       {/* Shared Search & Filter Bar for List Tabs */}
       {tab !== 'profile' && tab !== 'statutory' && (
         <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 text-xs">
@@ -601,7 +931,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                         ReportsTo: e.reportingManagerId || 'Board'
                       }))
               }
-              fileName={`Orbyx_Org_${tab}`}
+              fileName={`Celestial_Org_${tab}`}
             />
           </div>
         </div>
@@ -964,6 +1294,17 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
 
       {tab === 'statutory' && (
         <form onSubmit={saveProfile} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-6 text-xs">
+          {!statutoryConfigured && (
+            <div className="flex items-start gap-2.5 p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 text-xs">
+              <ShieldAlert className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="font-bold">Statutory Configuration Not Yet Configured in Database:</span>
+                <p className="text-blue-800 leading-relaxed">
+                  Displaying statutory guidelines and template defaults for FY 2026-27. Review and click "Save Statutory & Compliance Configuration" to establish your authoritative corporate statutory policy in PostgreSQL.
+                </p>
+              </div>
+            </div>
+          )}
 
 
           {/* 1. EPF */}
@@ -1320,6 +1661,14 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                             >
                               {active ? 'Deactivate' : 'Activate'}
                             </button>
+                            <button
+                              onClick={() => handleDeleteBranch(b)}
+                              className="px-2 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded inline-flex items-center gap-1"
+                              title="Delete Branch"
+                            >
+                              <Trash2 size={12} />
+                              Delete
+                            </button>
                           </div>
                         </td>
                       )}
@@ -1406,6 +1755,14 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                             }`}
                         >
                           {active ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteDept(d)}
+                          className="px-2 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded inline-flex items-center gap-1"
+                          title="Delete Department"
+                        >
+                          <Trash2 size={12} />
+                          Delete
                         </button>
                       </div>
                     )}
@@ -1512,6 +1869,14 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                             >
                               {active ? 'Deactivate' : 'Activate'}
                             </button>
+                            <button
+                              onClick={() => handleDeleteDesig(d)}
+                              className="px-2 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded inline-flex items-center gap-1"
+                              title="Delete Designation"
+                            >
+                              <Trash2 size={12} />
+                              Delete
+                            </button>
                           </div>
                         </td>
                       )}
@@ -1529,56 +1894,89 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
           <OrgChart onSelectEmployee={() => { }} />
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="mb-1 font-bold text-slate-900">Operational Reporting Line Assignments</h2>
-            <p className="mb-4 text-sm text-slate-500">
-              Manage operational reporting lines across payroll employees. Self-reporting and circular reporting relationships are automatically blocked.
-            </p>
-            <div className="grid gap-3 md:grid-cols-2">
-              {filteredHierarchy.map((e) => (
-                <div
-                  key={e.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3"
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+              <div>
+                <h2 className="font-bold text-slate-900">Operational Reporting Line Assignments</h2>
+                <p className="text-sm text-slate-500">
+                  Manage operational reporting lines across payroll employees. Self-reporting and circular reporting relationships are automatically blocked.
+                </p>
+              </div>
+              {loadingEmployees && (
+                <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg shrink-0">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Loading employees...</span>
+                </div>
+              )}
+            </div>
+
+            {employeeError && (
+              <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                  <span>Employee Service Notice: {employeeError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fetchLiveOrgData()}
+                  className="font-semibold text-amber-900 underline hover:no-underline"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={e.avatarUrl}
-                      alt=""
-                      className="h-10 w-10 rounded-full object-cover shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-slate-900">
-                        {e.firstName} {e.lastName}{' '}
-                        <span className="font-mono text-xs font-normal text-slate-400">({e.id})</span>
-                      </p>
-                      <p className="truncate text-xs text-slate-500">
-                        {designations.find((d) => d.id === e.designationId)?.title || 'Employee'} ·{' '}
-                        {departments.find((d) => d.id === e.departmentId)?.name || 'Department'}
-                      </p>
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {!loadingEmployees && !employeeError && employees.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
+                No active employee records found in live Employee Service.
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {filteredHierarchy.map((e) => (
+                  <div
+                    key={e.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={e.avatarUrl}
+                        alt=""
+                        className="h-10 w-10 rounded-full object-cover shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-slate-900">
+                          {e.firstName} {e.lastName}{' '}
+                          <span className="font-mono text-xs font-normal text-slate-400">({e.id})</span>
+                        </p>
+                        <p className="truncate text-xs text-slate-500">
+                          {designations.find((d) => d.id === e.designationId)?.title || 'Employee'} ·{' '}
+                          {departments.find((d) => d.id === e.departmentId)?.name || 'Department'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="w-48 shrink-0">
+                      <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-0.5">
+                        Reports To
+                      </label>
+                      <select
+                        disabled={!isHR}
+                        value={e.reportingManagerId || ''}
+                        onChange={(valueEvent) => updateReportingManager(e.id, valueEvent.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-800 disabled:opacity-60"
+                      >
+                        <option value="">None / Top Level (No Direct Manager)</option>
+                        {employees
+                          .filter((candidate) => candidate.id !== e.id)
+                          .map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {candidate.firstName} {candidate.lastName} ({candidate.id})
+                            </option>
+                          ))}
+                      </select>
                     </div>
                   </div>
-                  <div className="w-48 shrink-0">
-                    <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-0.5">
-                      Reports To
-                    </label>
-                    <select
-                      disabled={!isHR}
-                      value={e.reportingManagerId || ''}
-                      onChange={(valueEvent) => updateReportingManager(e.id, valueEvent.target.value)}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-800 disabled:opacity-60"
-                    >
-                      <option value="">Chairman / Board of Directors (Top)</option>
-                      {employees
-                        .filter((candidate) => candidate.id !== e.id)
-                        .map((candidate) => (
-                          <option key={candidate.id} value={candidate.id}>
-                            {candidate.firstName} {candidate.lastName} ({candidate.id})
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       )}
@@ -1599,9 +1997,9 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
             <label className="block">
               <span className={labelClass}>Branch Code</span>
               <input
+                disabled
                 className={inputClass}
                 value={editingBranch.code}
-                onChange={(e) => setEditingBranch({ ...editingBranch, code: e.target.value.toUpperCase() })}
               />
             </label>
             <label className="block">
@@ -1615,11 +2013,22 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button onClick={() => setEditingBranch(null)} className="px-3 py-1.5 border rounded-lg">Cancel</button>
               <button
-                onClick={() => {
-                  db.saveBranch(editingBranch);
-                  setBranches(db.getBranches());
-                  setEditingBranch(null);
-                  notify('Branch updated.');
+                onClick={async () => {
+                  setErrorMsg('');
+                  try {
+                    const updated = await orgApi.updateBranch(editingBranch.id, {
+                      name: editingBranch.name,
+                      city: editingBranch.city,
+                    });
+                    setBranches((prev) =>
+                      prev.map((b) => (b.id === editingBranch.id ? { ...b, name: updated.name, city: updated.city } : b))
+                    );
+                    setEditingBranch(null);
+                    notify('Branch updated successfully.');
+                  } catch (err: any) {
+                    console.error('Failed to update branch:', err);
+                    setErrorMsg(err?.message || 'Failed to update branch.');
+                  }
                 }}
                 className="px-4 py-1.5 bg-indigo-600 text-white font-semibold rounded-lg"
               >
@@ -1646,9 +2055,9 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
             <label className="block">
               <span className={labelClass}>Code</span>
               <input
+                disabled
                 className={inputClass}
                 value={editingDept.code}
-                onChange={(e) => setEditingDept({ ...editingDept, code: e.target.value.toUpperCase() })}
               />
             </label>
             <label className="block">
@@ -1663,11 +2072,22 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button onClick={() => setEditingDept(null)} className="px-3 py-1.5 border rounded-lg">Cancel</button>
               <button
-                onClick={() => {
-                  db.saveDepartment(editingDept);
-                  setDepartments(db.getDepartments());
-                  setEditingDept(null);
-                  notify('Department updated.');
+                onClick={async () => {
+                  setErrorMsg('');
+                  try {
+                    const updated = await orgApi.updateDepartment(editingDept.id, {
+                      name: editingDept.name,
+                      description: editingDept.description,
+                    });
+                    setDepartments((prev) =>
+                      prev.map((d) => (d.id === editingDept.id ? { ...d, name: updated.name, description: updated.description || d.description || '' } : d))
+                    );
+                    setEditingDept(null);
+                    notify('Department updated successfully.');
+                  } catch (err: any) {
+                    console.error('Failed to update department:', err);
+                    setErrorMsg(err?.message || 'Failed to update department.');
+                  }
                 }}
                 className="px-4 py-1.5 bg-indigo-600 text-white font-semibold rounded-lg"
               >
@@ -1694,9 +2114,9 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
             <label className="block">
               <span className={labelClass}>Code</span>
               <input
+                disabled
                 className={inputClass}
                 value={editingDesig.code}
-                onChange={(e) => setEditingDesig({ ...editingDesig, code: e.target.value.toUpperCase() })}
               />
             </label>
             <label className="block">
@@ -1706,21 +2126,33 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                 value={editingDesig.level}
                 onChange={(e) => setEditingDesig({ ...editingDesig, level: e.target.value })}
               >
-                <option value="Junior">Junior</option>
-                <option value="Mid">Mid</option>
-                <option value="Senior">Senior</option>
-                <option value="Lead">Lead</option>
-                <option value="Executive">Executive</option>
+                <option value="1">Level 1 (Junior)</option>
+                <option value="2">Level 2 (Mid)</option>
+                <option value="3">Level 3 (Senior)</option>
+                <option value="4">Level 4 (Lead)</option>
+                <option value="5">Level 5 (Manager)</option>
+                <option value="6">Level 6 (Principal / Executive)</option>
               </select>
             </label>
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button onClick={() => setEditingDesig(null)} className="px-3 py-1.5 border rounded-lg">Cancel</button>
               <button
-                onClick={() => {
-                  db.saveDesignation(editingDesig);
-                  setDesignations(db.getDesignations());
-                  setEditingDesig(null);
-                  notify('Designation updated.');
+                onClick={async () => {
+                  setErrorMsg('');
+                  try {
+                    const updated = await orgApi.updateDesignation(editingDesig.id, {
+                      title: editingDesig.title,
+                      level: parseInt(editingDesig.level, 10) || 1,
+                    });
+                    setDesignations((prev) =>
+                      prev.map((ds) => (ds.id === editingDesig.id ? { ...ds, title: updated.title, level: String(updated.level) } : ds))
+                    );
+                    setEditingDesig(null);
+                    notify('Designation updated successfully.');
+                  } catch (err: any) {
+                    console.error('Failed to update designation:', err);
+                    setErrorMsg(err?.message || 'Failed to update designation.');
+                  }
                 }}
                 className="px-4 py-1.5 bg-indigo-600 text-white font-semibold rounded-lg"
               >
@@ -1737,7 +2169,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
         onClose={() => setShowDeptImport(false)}
         title="Import Departments (CSV)"
         description="Upload or paste department records. Duplicate department codes are automatically rejected."
-        templateFileName="Orbyx_Departments"
+        templateFileName="Celestial_Departments"
         headers={['Name', 'Code', 'Description']}
         sampleRows={[
           ['Quality Assurance', 'QA', 'Automated testing and release validation'],
@@ -1755,7 +2187,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
           return {
             valid: true,
             data: {
-              id: `DEP-${code.toUpperCase()}-${Date.now().toString().slice(-3)}`,
+              id: `DEP-${code.toUpperCase()}`,
               name,
               code: code.toUpperCase(),
               description: description || '',
@@ -1763,10 +2195,43 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
             }
           };
         }}
-        onCommit={(validDepts) => {
-          validDepts.forEach((d) => db.saveDepartment(d));
-          setDepartments(db.getDepartments());
-          notify(`Imported ${validDepts.length} department(s).`);
+        onCommit={async (validDepts) => {
+          setErrorMsg('');
+          const successes: Department[] = [];
+          const failures: string[] = [];
+
+          for (const d of validDepts) {
+            try {
+              const res = await orgApi.createDepartment({
+                code: d.code,
+                name: d.name,
+                description: d.description,
+              });
+              successes.push({
+                id: res.code || res.id,
+                code: res.code,
+                name: res.name,
+                description: res.description || res.name,
+                headEmployeeId: res.headEmployeeId,
+                isActive: res.status === 'Active',
+              });
+            } catch (err: any) {
+              failures.push(`${d.code}: ${err?.message || 'Creation failed'}`);
+            }
+          }
+
+          if (successes.length > 0) {
+            setDepartments((prev) => [...prev, ...successes]);
+          }
+
+          if (failures.length === 0) {
+            notify(`Successfully imported ${successes.length} department(s) to PostgreSQL.`);
+          } else if (successes.length > 0) {
+            notify(`Imported ${successes.length} department(s). ${failures.length} failed.`);
+            setErrorMsg(`Some departments failed: ${failures.join('; ')}`);
+          } else {
+            setErrorMsg(`Failed to import departments: ${failures.join('; ')}`);
+          }
         }}
       />
     </div>

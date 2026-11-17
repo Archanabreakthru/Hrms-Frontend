@@ -1,4 +1,4 @@
-// Orbyx HRMS - External Client Supervisor Dashboard
+// Celestial HRMS - External Client Supervisor Dashboard
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Users,
@@ -246,7 +246,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
       });
 
       if (res.success) {
-        setNotice(`Attendance for ${selectedEmpId} on ${entryDate} submitted & verified! It is now in Orbyx HR's approval queue.`);
+        setNotice(`Attendance for ${selectedEmpId} on ${entryDate} submitted & verified! It is now in Celestial HR's approval queue.`);
         setActiveTab('approvals');
       } else {
         setEntryError(res.message);
@@ -420,7 +420,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
     });
 
     if (res.success) {
-      setNotice(`Stage 1 Verification Complete: ${res.updatedCount} record(s) approved and submitted to Orbyx HR approval queue!`);
+      setNotice(`Stage 1 Verification Complete: ${res.updatedCount} record(s) approved and submitted to Celestial HR approval queue!`);
       setSelectedRecordIds([]);
     }
   };
@@ -521,7 +521,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-sm tracking-wide text-white">ORBYX HRMS</span>
+                <span className="font-bold text-sm tracking-wide text-white">Celestial HRMS</span>
                 <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 border border-teal-500/30">
                   Client Supervisor Portal
                 </span>
@@ -852,7 +852,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
               <div className="text-xs text-slate-500 flex-1">
                 <span className="font-semibold text-slate-700 block">Two-Stage Verification Pipeline:</span>
                 <p className="text-[11px] text-slate-500">
-                  1. You record & approve as Supervisor &rarr; 2. Orbyx Internal HR does Final Approval &rarr; Eligible for Payroll.
+                  1. You record & approve as Supervisor &rarr; 2. Celestial Internal HR does Final Approval &rarr; Eligible for Payroll.
                 </p>
               </div>
             </div>
@@ -968,7 +968,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition-colors shadow-2xs"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    <span>Approve & Submit to Orbyx HR</span>
+                    <span>Approve & Submit to Celestial HR</span>
                   </button>
                 </div>
               </div>
@@ -1137,7 +1137,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition-colors shadow-2xs"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    <span>Approve & Submit Selected to Orbyx HR</span>
+                    <span>Approve & Submit Selected to Celestial HR</span>
                   </button>
                 </div>
               </div>
@@ -1154,7 +1154,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Attendance Approval Queue</h3>
                 <p className="text-xs text-slate-500">
-                  Review recorded employee timesheets. Approve & Submit to forward records to Orbyx Internal HR for final authorization.
+                  Review recorded employee timesheets. Approve & Submit to forward records to Celestial Internal HR for final authorization.
                 </p>
               </div>
 
@@ -1219,7 +1219,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
                     className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg shadow-2xs"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    <span>Approve & Submit to Orbyx HR ({selectedRecordIds.length})</span>
+                    <span>Approve & Submit to Celestial HR ({selectedRecordIds.length})</span>
                   </button>
                 </div>
               </div>
@@ -1252,7 +1252,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
                     <th className="p-3">Hours</th>
                     <th className="p-3">Punch Times</th>
                     <th className="p-3">Stage 1: Supervisor Status</th>
-                    <th className="p-3">Stage 2: Orbyx HR Status</th>
+                    <th className="p-3">Stage 2: Celestial HR Status</th>
                     <th className="p-3">Payroll Eligibility</th>
                     <th className="p-3 text-right">Actions</th>
                   </tr>
@@ -1373,7 +1373,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
                                       notes: 'Single record verified in Client Portal.'
                                     });
                                     if (res.success) {
-                                      setNotice(`Attendance on ${rec.date} for ${rec.employeeId} approved & submitted to Orbyx HR.`);
+                                      setNotice(`Attendance on ${rec.date} for ${rec.employeeId} approved & submitted to Celestial HR.`);
                                     }
                                   }}
                                   className="px-2.5 py-1 rounded bg-teal-600 hover:bg-teal-700 text-white font-bold text-[11px] shadow-2xs"
@@ -1591,7 +1591,7 @@ export const ClientSupervisorDashboard: React.FC<ClientSupervisorDashboardProps>
 
       {/* Footer */}
       <footer className="bg-slate-900 border-t border-slate-800 text-slate-500 text-xs py-3 text-center">
-        Orbyx HRMS &copy; 2026. External Client Supervisor Portal - Isolated Partner Session.
+        Celestial HRMS &copy; 2026. External Client Supervisor Portal - Isolated Partner Session.
       </footer>
     </div>
   );

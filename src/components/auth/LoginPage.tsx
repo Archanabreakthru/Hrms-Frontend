@@ -1,8 +1,11 @@
-// Orbyx HRMS - Enterprise Login Page
-// Development Phase: Individual Username/Password Authentication
-import React, { useState } from 'react';
+// Celestial HRMS - Enterprise Login Page
+// Database-backed Dynamic Branding and Authentication
+import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, Lock, Mail, ArrowRight, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../../services/authContext';
+import { db } from '../../db/storage';
+import { CompanyProfile } from '../../types/hrms';
+
 
 export const LoginPage: React.FC = () => {
   const { login, isLoading } = useAuth();
@@ -10,6 +13,19 @@ export const LoginPage: React.FC = () => {
   const [passwordInput, setPasswordInput] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(() => db.getCompanyProfile());
+
+  useEffect(() => {
+    try {
+      const profile = db.getCompanyProfile();
+      if (profile) setCompanyProfile(profile);
+    } catch {
+      // fallback to initial state
+    }
+  }, []);
+
+  const companyName = companyProfile?.name || 'Celestial HRMS';
+  const brandInitial = companyName.charAt(0).toUpperCase() || 'O';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,12 +53,20 @@ export const LoginPage: React.FC = () => {
       {/* Top Bar with Brand Badge */}
       <header className="border-b border-slate-800 bg-slate-950/70 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-sm">
-            O
-          </div>
+          {companyProfile?.logoUrl ? (
+            <img
+              src={companyProfile.logoUrl}
+              alt={companyName}
+              className="h-9 w-9 rounded-lg object-contain bg-slate-800 p-1 border border-slate-700"
+            />
+          ) : (
+            <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-sm">
+              {brandInitial}
+            </div>
+          )}
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-base tracking-wide text-white">ORBYX HRMS</span>
+              <span className="font-bold text-base tracking-wide text-white">{companyName}</span>
               <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 Enterprise
               </span>
@@ -50,15 +74,6 @@ export const LoginPage: React.FC = () => {
             <p className="text-[11px] text-slate-400">Enterprise Human Resource Management System</p>
           </div>
         </div>
-
-        {/* Portal Quick Access Link */}
-        <a
-          href="#client-portal/login"
-          className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors"
-          title="Open External Client Partner Portal"
-        >
-          Client Supervisor Portal &rarr;
-        </a>
       </header>
 
       {/* Main Login Card Container */}
@@ -71,7 +86,7 @@ export const LoginPage: React.FC = () => {
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white">Welcome Back</h1>
             <p className="text-xs text-slate-400 max-w-xs mx-auto">
-              Sign in with your Orbyx credentials to access your workforce dashboard and services.
+              Sign in with your organization credentials to access your workforce dashboard and services.
             </p>
           </div>
 
@@ -104,7 +119,7 @@ export const LoginPage: React.FC = () => {
                   disabled={isLoading}
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="e.g. raseedh@orbyx.internal"
+                  placeholder="e.g. employee@company.com"
                   className="block w-full pl-9 pr-3 py-2.5 text-xs text-white bg-slate-900/80 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-500 disabled:opacity-50"
                 />
               </div>
@@ -163,10 +178,10 @@ export const LoginPage: React.FC = () => {
             </div>
           </form>
 
-          {/* Development Notice */}
+          {/* Authentication Status Notice */}
           <div className="pt-2 text-center">
             <p className="text-[11px] text-slate-500">
-              Frontend Development Authentication &bull; Individual credentials verified against prototype roster
+              Enterprise Authentication &bull; Verified against PostgreSQL Database &amp; Dynamic RBAC
             </p>
           </div>
         </div>
@@ -174,7 +189,7 @@ export const LoginPage: React.FC = () => {
 
       {/* Footer */}
       <footer className="border-t border-slate-800 bg-slate-950/60 px-6 py-3.5 text-center text-slate-500 text-xs">
-        Orbyx HRMS &copy; 2026. All rights reserved. Enterprise Workforce Operating System.
+        Secure access to your organization's workforce platform. &copy; {new Date().getFullYear()} {companyName}.
       </footer>
     </div>
   );

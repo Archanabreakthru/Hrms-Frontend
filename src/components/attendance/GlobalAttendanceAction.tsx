@@ -11,10 +11,8 @@ import {
   MapPin
 } from 'lucide-react';
 import { useAuth } from '../../services/authContext';
-import { db, subscribeToDB } from '../../db/storage';
-import { hrmsService } from '../../services/hrmsService';
 import { AttendanceRecord, ShiftDefinition, Holiday, LeaveApplication } from '../../types/hrms';
-import { clientAttendanceIntegration } from '../clients/clientAttendanceIntegration';
+import { attendanceApi } from '../../services/attendanceApi';
 
 export type GlobalAttendanceStatus =
   | 'NOT_CHECKED_IN'
@@ -38,13 +36,34 @@ export const GlobalAttendanceAction: React.FC = () => {
   const [dbTick, setDbTick] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [liveTodayRecord, setLiveTodayRecord] = useState<AttendanceRecord | null>(null);
+  const [approvedLeaves, setApprovedLeaves] = useState<LeaveApplication[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [shifts, setShifts] = useState<ShiftDefinition[]>([]);
 
-  // Subscribe to storage changes so any attendance action across any module / persona switcher immediately syncs
+  // Load live data from Attendance Service via API Gateway
+  const fetchLiveStatus = useCallback(async () => {
+    if (!currentUser?.employeeId) return;
+    try {
+      const year = new Date().getFullYear();
+      const [record, leaves, hols, shiftList] = await Promise.all([
+        attendanceApi.getTodayRecord(currentUser.employeeId).catch(() => null),
+        attendanceApi.listLeaveApplications({ employeeId: currentUser.employeeId, status: 'Approved' }).catch(() => []),
+        attendanceApi.listHolidays(year).catch(() => []),
+        attendanceApi.listShifts().catch(() => []),
+      ]);
+      setLiveTodayRecord(record);
+      setApprovedLeaves(leaves);
+      setHolidays(hols);
+      setShifts(shiftList);
+    } catch (err) {
+      console.warn('Attendance API live status query warning:', err);
+    }
+  }, [currentUser]);
+
   useEffect(() => {
-    return subscribeToDB(() => {
-      setDbTick((t) => t + 1);
-    });
-  }, []);
+    fetchLiveStatus();
+  }, [fetchLiveStatus]);
 
   // Compute today's date formatted as YYYY-MM-DD
   const todayStr = useMemo(() => {
@@ -67,11 +86,8 @@ export const GlobalAttendanceAction: React.FC = () => {
       };
     }
 
-    // 1. Check if an AttendanceRecord exists for today
-    const records = db.getAttendanceRecords();
-    const todayRecord = records.find(
-      (r) => r.employeeId === employeeId && r.date === todayStr
-    );
+    // 1. Check live backend record first
+    const todayRecord = liveTodayRecord;
 
     if (todayRecord) {
       if (todayRecord.checkOutTime) {
@@ -93,27 +109,22 @@ export const GlobalAttendanceAction: React.FC = () => {
     }
 
     // 2. Check if user is on approved leave today
-    const leaveApps = db.getLeaveApplications();
-    const approvedLeave = leaveApps.find(
+    const approvedLeave = approvedLeaves.find(
       (l) =>
-        l.employeeId === employeeId &&
-        l.status === 'Approved' &&
         l.startDate <= todayStr &&
         todayStr <= l.endDate
     );
 
     if (approvedLeave) {
-      const leaveType = db.getLeaveTypes().find((lt) => lt.id === approvedLeave.leaveTypeId);
       return {
         status: 'ON_LEAVE',
         label: 'On Leave',
-        sublabel: leaveType ? leaveType.name : 'Approved Leave',
-        leaveType: leaveType?.name
+        sublabel: approvedLeave.reason || 'Approved Leave',
+        leaveType: approvedLeave.leaveTypeId
       };
     }
 
     // 3. Check if today is a public / company holiday
-    const holidays = db.getHolidays();
     const holiday = holidays.find((h) => h.date === todayStr);
     if (holiday) {
       return {
@@ -125,9 +136,7 @@ export const GlobalAttendanceAction: React.FC = () => {
     }
 
     // 4. Check if today is a weekly off day for the employee's shift
-    const emp = db.getEmployeeById(employeeId);
-    const shifts = db.getShifts();
-    const empShift = shifts.find((s) => s.id === emp?.shiftId) || shifts[0];
+    const empShift = shifts[0];
     const dayOfWeek = new Date().getDay(); // 0 = Sun, 6 = Sat
     const isWeeklyOff = empShift?.weeklyOffDays?.includes(dayOfWeek) ?? (dayOfWeek === 0 || dayOfWeek === 6);
 
@@ -145,7 +154,7 @@ export const GlobalAttendanceAction: React.FC = () => {
       label: 'Check In',
       sublabel: empShift ? `${empShift.name} (${empShift.startTime})` : undefined
     };
-  }, [currentUser, todayStr, dbTick]);
+  }, [currentUser, todayStr, liveTodayRecord, approvedLeaves, holidays, shifts]);
 
   // Handle Check In
   const handleCheckIn = useCallback(async () => {
@@ -158,26 +167,25 @@ export const GlobalAttendanceAction: React.FC = () => {
 
     setIsProcessing(true);
     try {
-      const res = hrmsService.punchAttendance(
-        currentUser.employeeId,
-        'check-in',
-        currentUser.id,
-        currentUser.name,
-        { workMode: 'Office' }
-      );
-
-      if (res.success) {
-        setFeedbackMessage({ type: 'success', text: res.message || 'Check-In recorded successfully!' });
-      } else {
-        setFeedbackMessage({ type: 'error', text: res.error || res.message || 'Failed to record Check-In.' });
-      }
+      const now = new Date();
+      const liveRecord = await attendanceApi.punchClock({
+        employeeId: currentUser.employeeId,
+        date: todayStr,
+        punchType: 'IN',
+        timestamp: now.toISOString(),
+        workMode: 'Office',
+        shiftId: shifts[0]?.id || 'SHIFT-GEN',
+      });
+      setLiveTodayRecord(liveRecord);
+      setFeedbackMessage({ type: 'success', text: 'Check-In recorded successfully in PostgreSQL!' });
+      await fetchLiveStatus();
     } catch (err: any) {
       setFeedbackMessage({ type: 'error', text: err?.message || 'Unexpected error recording Check-In.' });
     } finally {
       setIsProcessing(false);
       setTimeout(() => setFeedbackMessage(null), 3500);
     }
-  }, [currentUser, isProcessing]);
+  }, [currentUser, isProcessing, todayStr, shifts, fetchLiveStatus]);
 
   // Handle Check Out
   const handleCheckOut = useCallback(async () => {
@@ -190,49 +198,25 @@ export const GlobalAttendanceAction: React.FC = () => {
 
     setIsProcessing(true);
     try {
-      const res = hrmsService.punchAttendance(
-        currentUser.employeeId,
-        'check-out',
-        currentUser.id,
-        currentUser.name,
-        { workMode: 'Office' }
-      );
-
-      if (res.success) {
-        setFeedbackMessage({ type: 'success', text: res.message || 'Check-Out recorded successfully!' });
-        if (res.record) {
-          clientAttendanceIntegration.syncAttendanceRecord({
-            id: res.record.id,
-            employeeId: res.record.employeeId,
-            employeeName: currentUser.name,
-            date: res.record.date,
-            shiftId: res.record.shiftId || 'SHIFT-GEN',
-            shiftName: 'General Day Shift (09:30 - 18:30)',
-            checkInTime: res.record.checkInTime,
-            checkOutTime: res.record.checkOutTime,
-            totalHours: res.record.totalHoursWorked || 0,
-            netWorkingHours: res.record.totalHoursWorked || 0,
-            breakDurationMinutes: 60,
-            overtimeHours: res.record.overtimeHours || 0,
-            isLate: Boolean(res.record.isLate),
-            lateMinutes: res.record.lateMinutes || 0,
-            isEarlyDeparture: Boolean(res.record.isEarlyDeparture),
-            isMissingPunch: false,
-            status: (res.record.status as any) || 'Present',
-            workLocationType: res.record.workMode === 'Client Site' ? 'Client Site' : 'Office',
-            source: 'Web Punch'
-          });
-        }
-      } else {
-        setFeedbackMessage({ type: 'error', text: res.error || res.message || 'Failed to record Check-Out.' });
-      }
+      const now = new Date();
+      const liveRecord = await attendanceApi.punchClock({
+        employeeId: currentUser.employeeId,
+        date: todayStr,
+        punchType: 'OUT',
+        timestamp: now.toISOString(),
+        workMode: 'Office',
+        shiftId: shifts[0]?.id || 'SHIFT-GEN',
+      });
+      setLiveTodayRecord(liveRecord);
+      setFeedbackMessage({ type: 'success', text: `Check-Out recorded successfully! Total hours: ${liveRecord.totalHoursWorked || 0}h` });
+      await fetchLiveStatus();
     } catch (err: any) {
       setFeedbackMessage({ type: 'error', text: err?.message || 'Unexpected error recording Check-Out.' });
     } finally {
       setIsProcessing(false);
       setTimeout(() => setFeedbackMessage(null), 3500);
     }
-  }, [currentUser, isProcessing]);
+  }, [currentUser, isProcessing, todayStr, shifts, fetchLiveStatus]);
 
   // Render button or indicator based on attendance state
   return (
