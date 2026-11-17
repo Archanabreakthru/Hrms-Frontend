@@ -3,6 +3,7 @@ import { Modal } from '../common/Modal';
 import { hrmsService } from '../../services/hrmsService';
 import { useAuth } from '../../services/authContext';
 import { db } from '../../db/storage';
+import { attendanceApi } from '../../services/attendanceApi';
 import { AlertCircle, Check, AlertTriangle, Building2, Mail } from 'lucide-react';
 
 interface RequestCorrectionModalProps {
@@ -113,7 +114,7 @@ export const RequestCorrectionModal: React.FC<RequestCorrectionModalProps> = ({
     return Number((workedMins / 60).toFixed(2));
   }, [requestedCheckIn, requestedCheckOut, breakDurationMinutes]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) {
       setError('A mandatory reason explaining the failure, exception, or timestamp correction is required.');
@@ -122,6 +123,21 @@ export const RequestCorrectionModal: React.FC<RequestCorrectionModalProps> = ({
     if (calculatedHours <= 0) {
       setError('Calculated worked hours must be greater than 0.');
       return;
+    }
+
+    // Persist to backend Attendance Service if linked to an existing record
+    if (existingRecord?.id) {
+      try {
+        await attendanceApi.requestRegularization({
+          attendanceRecordId: existingRecord.id,
+          employeeId: targetEmployeeId,
+          requestedCheckIn: `${date}T${requestedCheckIn}:00.000Z`,
+          requestedCheckOut: `${date}T${requestedCheckOut}:00.000Z`,
+          reason: `[${exceptionType}] ${reason}${outageIncidentRef ? ` (Ref: ${outageIncidentRef})` : ''}`,
+        });
+      } catch (backendErr: any) {
+        console.warn('Backend regularization request warning, syncing via local audit:', backendErr);
+      }
     }
 
     hrmsService.submitAttendanceCorrection(
@@ -288,7 +304,7 @@ export const RequestCorrectionModal: React.FC<RequestCorrectionModalProps> = ({
                 </span>
               </div>
               <p className="text-[10px] text-slate-600">
-                Client supervisors do not log in to Orbyx HRMS. Upon submission, this record will be marked{' '}
+                Client supervisors do not log in to Celestial HRMS. Upon submission, this record will be marked{' '}
                 <strong>Pending Client Email Verification (Stage 1)</strong> and{' '}
                 <strong>Pending Company Approval (Stage 2)</strong>.
               </p>

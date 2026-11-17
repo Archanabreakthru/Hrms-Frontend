@@ -1,4 +1,4 @@
-// Orbyx HRMS - Client Portal Root Container (Revised Specification)
+// Celestial HRMS - Client Portal Root Container (Revised Specification)
 // Direct flow: Client Manager Login -> One Single Attendance Verification Page
 import React, { useState } from 'react';
 import { ClientManagerProfile, DEFAULT_CLIENT_MANAGER } from './mockClientData';

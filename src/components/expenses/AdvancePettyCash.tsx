@@ -1,181 +1,169 @@
-import React, { useState } from 'react';
-import { CreditCard, Wallet, Plus, CheckCircle2, Clock, ArrowLeftRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { CreditCard, Wallet, Plus, CheckCircle2, Clock, ArrowLeftRight, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../services/authContext';
-import { db } from '../../db/storage';
+import { expenseApi, AdvancePettyCashDTO, AdvanceType } from '../../services/expenseApi';
 
-type RequestType = 'Salary Advance' | 'Travel Petty Cash';
-type RequestStatus = 'Pending Approval' | 'Approved' | 'Rejected' | 'Disbursed' | 'Settlement Pending' | 'Settled';
-
-interface AdvanceRecord {
-  id: string;
-  employeeId: string;
-  type: RequestType;
-  amount: number;
-  purpose: string;
-  date: string;
-  status: RequestStatus;
-  approvedAmount?: number;
-  recoveredAmount?: number;
-  paymentReference?: string;
-  actualExpense?: number;
-  settlementNote?: string;
-}
-
-const KEY = 'orbyx_hrms_advance_petty_cash_v1';
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100';
-
-const seedAdvances: AdvanceRecord[] = [
-  {
-    id: 'ADV-2026-101',
-    employeeId: 'EMP-003',
-    type: 'Salary Advance',
-    amount: 20000,
-    approvedAmount: 20000,
-    recoveredAmount: 5000,
-    purpose: 'Emergency family medical expense - requested 4-month payroll recovery',
-    date: '2026-10-05',
-    status: 'Disbursed',
-    paymentReference: 'UTR-HDFC-449102'
-  },
-  {
-    id: 'ADV-2026-102',
-    employeeId: 'EMP-004',
-    type: 'Travel Petty Cash',
-    amount: 15000,
-    approvedAmount: 15000,
-    purpose: 'Onsite client deployment visit to Mumbai (3 days hotel & local transit)',
-    date: '2026-10-12',
-    status: 'Disbursed',
-    paymentReference: 'UTR-ICICI-882319'
-  },
-  {
-    id: 'ADV-2026-103',
-    employeeId: 'EMP-005',
-    type: 'Salary Advance',
-    amount: 12000,
-    purpose: 'Festival advance request for November',
-    date: '2026-10-20',
-    status: 'Pending Approval'
-  }
-];
-
-const read = (): AdvanceRecord[] => {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) {
-      localStorage.setItem(KEY, JSON.stringify(seedAdvances));
-      return seedAdvances;
-    }
-    const parsed = JSON.parse(raw) as AdvanceRecord[];
-    if (parsed.length === 0) {
-      localStorage.setItem(KEY, JSON.stringify(seedAdvances));
-      return seedAdvances;
-    }
-    return parsed;
-  } catch {
-    return seedAdvances;
-  }
-};
 
 export const AdvancePettyCash: React.FC = () => {
   const { currentUser } = useAuth();
-  const [records, setRecords] = useState<AdvanceRecord[]>(read);
+
+  const [records, setRecords] = useState<AdvancePettyCashDTO[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+
   const [showForm, setShowForm] = useState(false);
-  const [type, setType] = useState<RequestType>('Salary Advance');
+  const [type, setType] = useState<AdvanceType>('Salary Advance');
   const [amount, setAmount] = useState('');
   const [purpose, setPurpose] = useState('');
-  const [settleRecord, setSettleRecord] = useState<AdvanceRecord | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Settlement state
+  const [settleRecord, setSettleRecord] = useState<AdvancePettyCashDTO | null>(null);
   const [actual, setActual] = useState('');
   const [note, setNote] = useState('');
+  const [isSettling, setIsSettling] = useState(false);
+
+  // Disbursement state
   const [disbursingId, setDisbursingId] = useState<string | null>(null);
   const [disburseRefInput, setDisburseRefInput] = useState('');
+  const [isDisbursing, setIsDisbursing] = useState(false);
+
+  // Review state
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+
   const [message, setMessage] = useState('');
 
-  const isHR = currentUser.role === 'hr_admin';
-  const canApprove = isHR || currentUser.role === 'senior_manager';
+  const isHR = currentUser.role === 'hr_admin' || currentUser.role === 'super_admin';
+  const isManager = currentUser.role === 'senior_manager' || currentUser.role === 'reporting_manager';
+  const canApprove = isHR || isManager;
 
-  const save = (next: AdvanceRecord[]) => {
-    setRecords(next);
-    localStorage.setItem(KEY, JSON.stringify(next));
-  };
+  // Load advances from backend API
+  const loadAdvances = useCallback(async () => {
+    setIsLoading(true);
+    setApiError(null);
+    try {
+      const data = await expenseApi.getAdvances();
+      setRecords(data);
+    } catch (err: any) {
+      setApiError(err?.message || 'Failed to connect to the expense service. Please check your network connection.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
-  const mine = records.filter((r) => r.employeeId === currentUser.employeeId);
-  const visible = isHR || currentUser.role === 'senior_manager' ? records : mine;
+  useEffect(() => {
+    loadAdvances();
+  }, [loadAdvances]);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0 || !purpose.trim()) return;
-    const newRec: AdvanceRecord = {
-      id: `ADV-${Date.now()}`,
-      employeeId: currentUser.employeeId,
-      type,
-      amount: n,
-      purpose: purpose.trim(),
-      date: new Date().toISOString().slice(0, 10),
-      status: 'Pending Approval'
-    };
-    save([newRec, ...records]);
-    db.logAudit({
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role,
-      action: 'CREATE',
-      module: 'EXPENSE',
-      entityId: newRec.id,
-      entityName: newRec.type,
-      description: `Submitted ${newRec.type} request for ₹${n.toLocaleString('en-IN')}`
-    });
-    setAmount('');
-    setPurpose('');
-    setShowForm(false);
-    setMessage('Request submitted for approval.');
+
+    if (!currentUser.employeeId) {
+      setApiError('Your account is not linked to an Employee ID. Please contact HR.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setApiError(null);
+    try {
+      await expenseApi.requestAdvance({
+        employeeId: currentUser.employeeId,
+        advanceType: type,
+        amount: n,
+        purpose: purpose.trim(),
+        requestDate: new Date().toISOString().slice(0, 10),
+      });
+
+      setAmount('');
+      setPurpose('');
+      setShowForm(false);
+      setMessage('Request submitted successfully.');
+      await loadAdvances();
+    } catch (err: any) {
+      setApiError(err?.message || 'Failed to submit advance request.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const update = (id: string, patch: Partial<AdvanceRecord>) =>
-    save(records.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const handleReview = async (id: string, decision: 'Approved' | 'Rejected') => {
+    setReviewingId(id);
+    setApiError(null);
+    try {
+      await expenseApi.reviewAdvance(id, decision);
+      setMessage(`Request marked as ${decision}.`);
+      await loadAdvances();
+    } catch (err: any) {
+      if (err?.status === 409) {
+        setApiError('Concurrency Conflict: This record was already modified by another user. Reloading latest state...');
+      } else {
+        setApiError(err?.message || `Failed to ${decision.toLowerCase()} request.`);
+      }
+      await loadAdvances();
+    } finally {
+      setReviewingId(null);
+    }
+  };
 
-  const submitSettlement = (e: React.FormEvent) => {
+  const confirmDisbursement = async (id: string) => {
+    if (!disburseRefInput.trim()) return;
+    setIsDisbursing(true);
+    setApiError(null);
+    try {
+      await expenseApi.disburseAdvance(id, disburseRefInput.trim());
+      setDisbursingId(null);
+      setDisburseRefInput('');
+      setMessage('Advance disbursement recorded successfully.');
+      await loadAdvances();
+    } catch (err: any) {
+      if (err?.status === 409) {
+        setApiError('Concurrency Conflict: This advance has already been disbursed or updated. Reloading...');
+      } else {
+        setApiError(err?.message || 'Failed to record disbursement.');
+      }
+      await loadAdvances();
+    } finally {
+      setIsDisbursing(false);
+    }
+  };
+
+  const submitSettlement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!settleRecord) return;
     const n = Number(actual);
     if (!Number.isFinite(n) || n < 0) return;
-    update(settleRecord.id, {
-      actualExpense: n,
-      settlementNote: note,
-      status: 'Settlement Pending'
-    });
-    setSettleRecord(null);
-    setActual('');
-    setNote('');
-    setMessage('Settlement submitted for review.');
-  };
 
-  const confirmDisbursement = (id: string) => {
-    if (!disburseRefInput.trim()) return;
-    update(id, { status: 'Disbursed', paymentReference: disburseRefInput.trim() });
-    db.logAudit({
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role,
-      action: 'REIMBURSE',
-      module: 'EXPENSE',
-      entityId: id,
-      entityName: id,
-      description: `Disbursed advance via Ref #${disburseRefInput.trim()}`
-    });
-    setDisbursingId(null);
-    setDisburseRefInput('');
-    setMessage('Advance disbursement recorded.');
+    setIsSettling(true);
+    setApiError(null);
+    try {
+      await expenseApi.settleAdvance(settleRecord.id, n, note.trim() || 'Settlement submitted by employee');
+      setSettleRecord(null);
+      setActual('');
+      setNote('');
+      setMessage('Settlement submitted and recorded successfully.');
+      await loadAdvances();
+    } catch (err: any) {
+      if (err?.status === 409) {
+        setApiError('Concurrency Conflict: This record was already settled. Reloading...');
+      } else {
+        setApiError(err?.message || 'Failed to submit settlement.');
+      }
+      await loadAdvances();
+    } finally {
+      setIsSettling(false);
+    }
   };
 
   const totals = {
-    requested: visible
+    requested: records
       .filter((r) => r.status === 'Pending Approval')
       .reduce((s, r) => s + r.amount, 0),
-    outstanding: visible
+    outstanding: records
       .filter((r) => r.status === 'Disbursed' || r.status === 'Settlement Pending')
-      .reduce((s, r) => s + Math.max(0, (r.approvedAmount ?? r.amount) - (r.recoveredAmount ?? 0)), 0)
+      .reduce((s, r) => s + Math.max(0, (r.approvedAmount ?? r.amount) - (r.recoveredAmount ?? 0)), 0),
   };
 
   return (
@@ -184,22 +172,48 @@ export const AdvancePettyCash: React.FC = () => {
         <div>
           <h2 className="text-lg font-bold text-slate-900">Salary Advances & Travel Petty Cash</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Track requests, approvals, disbursements and travel settlements as separate financial events.
+            Track requests, approvals, disbursements and travel settlements as verified backend financial events.
           </p>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white"
-        >
-          <Plus size={16} />
-          New request
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={loadAdvances}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title="Refresh from server"
+          >
+            <RefreshCw size={14} className={isLoading ? 'animate-spin text-indigo-600' : ''} />
+            <span>Refresh</span>
+          </button>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 shadow-2xs"
+          >
+            <Plus size={16} />
+            New request
+          </button>
+        </div>
       </div>
 
+      {apiError && (
+        <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-sm text-rose-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="text-rose-600 shrink-0" />
+            <span>{apiError}</span>
+          </div>
+          <button
+            onClick={() => setApiError(null)}
+            className="text-xs font-semibold underline text-rose-700 hover:text-rose-900"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {message && (
-        <div className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
-          {message}
-          <button onClick={() => setMessage('')} className="ml-3 font-bold">
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800 flex items-center justify-between">
+          <span>{message}</span>
+          <button onClick={() => setMessage('')} className="ml-3 text-xs font-bold text-emerald-900 hover:underline">
             Dismiss
           </button>
         </div>
@@ -208,22 +222,23 @@ export const AdvancePettyCash: React.FC = () => {
       <div className="grid gap-3 sm:grid-cols-3">
         <Summary icon={Clock} title="Pending approval" value={`₹${totals.requested.toLocaleString('en-IN')}`} />
         <Summary icon={Wallet} title="Outstanding advances" value={`₹${totals.outstanding.toLocaleString('en-IN')}`} />
-        <Summary icon={CreditCard} title="Total requests" value={String(visible.length)} />
+        <Summary icon={CreditCard} title="Total requests" value={String(records.length)} />
       </div>
 
       {showForm && (
-        <form onSubmit={submit} className="rounded-xl border border-indigo-100 bg-white p-4">
-          <h3 className="mb-3 font-bold text-slate-900">Create financial request</h3>
+        <form onSubmit={submit} className="rounded-xl border border-indigo-100 bg-white p-4 space-y-3">
+          <h3 className="font-bold text-slate-900 text-sm">Create financial request</h3>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="text-xs font-semibold text-slate-600">
               Request type
               <select
                 className={`${field} mt-1`}
                 value={type}
-                onChange={(e) => setType(e.target.value as RequestType)}
+                onChange={(e) => setType(e.target.value as AdvanceType)}
+                disabled={isSubmitting}
               >
-                <option>Salary Advance</option>
-                <option>Travel Petty Cash</option>
+                <option value="Salary Advance">Salary Advance</option>
+                <option value="Travel Petty Cash">Travel Petty Cash</option>
               </select>
             </label>
             <label className="text-xs font-semibold text-slate-600">
@@ -236,6 +251,8 @@ export const AdvancePettyCash: React.FC = () => {
                 className={`${field} mt-1`}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
+                disabled={isSubmitting}
+                placeholder="e.g. 15000"
               />
             </label>
             <label className="text-xs font-semibold text-slate-600 md:col-span-2">
@@ -246,6 +263,7 @@ export const AdvancePettyCash: React.FC = () => {
                 className={`${field} mt-1`}
                 value={purpose}
                 onChange={(e) => setPurpose(e.target.value)}
+                disabled={isSubmitting}
                 placeholder={
                   type === 'Travel Petty Cash'
                     ? 'Destination, travel dates and business purpose'
@@ -254,28 +272,34 @@ export const AdvancePettyCash: React.FC = () => {
               />
             </label>
           </div>
-          <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-            Submitting a request does not disburse money or trigger a payroll deduction. Approval and payment are recorded separately.
+          <p className="rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800">
+            Submitting a request records a pending financial event on the server. Approval and disbursement are recorded as distinct transitions.
           </p>
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={() => setShowForm(false)}
-              className="rounded-lg border px-4 py-2 text-sm"
+              className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              disabled={isSubmitting}
             >
               Cancel
             </button>
-            <button className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
-              Submit request
+            <button
+              type="submit"
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5"
+              disabled={isSubmitting}
+            >
+              {isSubmitting && <Loader2 size={14} className="animate-spin" />}
+              <span>Submit request</span>
             </button>
           </div>
         </form>
       )}
 
       {settleRecord && (
-        <form onSubmit={submitSettlement} className="rounded-xl border border-indigo-100 bg-white p-4">
-          <h3 className="font-bold text-slate-900">Settle travel petty cash</h3>
-          <p className="my-2 text-sm text-slate-500">
+        <form onSubmit={submitSettlement} className="rounded-xl border border-indigo-100 bg-white p-4 space-y-3">
+          <h3 className="font-bold text-slate-900 text-sm">Settle travel petty cash</h3>
+          <p className="text-sm text-slate-500">
             Advance disbursed: ₹{(settleRecord.approvedAmount ?? settleRecord.amount).toLocaleString('en-IN')}
           </p>
           <label className="block text-xs font-semibold text-slate-600">
@@ -288,20 +312,23 @@ export const AdvancePettyCash: React.FC = () => {
               className={`${field} mt-1`}
               value={actual}
               onChange={(e) => setActual(e.target.value)}
+              disabled={isSettling}
+              placeholder="e.g. 14200"
             />
           </label>
-          <label className="mt-3 block text-xs font-semibold text-slate-600">
+          <label className="block text-xs font-semibold text-slate-600">
             Receipt references / settlement note
             <textarea
               className={`${field} mt-1`}
               rows={2}
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              disabled={isSettling}
               placeholder="Record receipt names or refund details"
             />
           </label>
           {actual !== '' && (
-            <p className="mt-2 rounded-lg bg-slate-50 p-3 text-sm">
+            <p className="rounded-lg bg-slate-50 p-2.5 text-sm">
               Settlement difference:{' '}
               <strong>
                 {Number(actual) - (settleRecord.approvedAmount ?? settleRecord.amount) >= 0
@@ -310,21 +337,28 @@ export const AdvancePettyCash: React.FC = () => {
               </strong>
             </p>
           )}
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={() => setSettleRecord(null)}
-              className="rounded-lg border px-4 py-2 text-sm"
+              className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              disabled={isSettling}
             >
               Cancel
             </button>
-            <button className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
-              Submit settlement
+            <button
+              type="submit"
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5"
+              disabled={isSettling}
+            >
+              {isSettling && <Loader2 size={14} className="animate-spin" />}
+              <span>Submit settlement</span>
             </button>
           </div>
         </form>
       )}
 
+      {/* Advance Records Table */}
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="w-full min-w-[820px] text-left text-sm">
           <thead>
@@ -338,159 +372,180 @@ export const AdvancePettyCash: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {visible.map((r) => {
-              const emp = db.getEmployeeById(r.employeeId);
-              const diff =
-                r.actualExpense === undefined
-                  ? undefined
-                  : r.actualExpense - (r.approvedAmount ?? r.amount);
-              const isOwnRequest = r.employeeId === currentUser.employeeId;
+            {isLoading ? (
+              <tr>
+                <td colSpan={6} className="p-10 text-center text-sm text-slate-500">
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-indigo-600" />
+                    <span>Loading financial records from server...</span>
+                  </div>
+                </td>
+              </tr>
+            ) : records.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="p-10 text-center text-sm text-slate-500">
+                  No advance or petty cash requests recorded in the system yet.
+                </td>
+              </tr>
+            ) : (
+              records.map((r) => {
+                const diff =
+                  r.actualExpense === undefined
+                    ? undefined
+                    : r.actualExpense - (r.approvedAmount ?? r.amount);
+                const isOwnRequest = r.employeeId === currentUser.employeeId;
 
-              return (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="p-3">
-                    <p className="font-semibold text-slate-900">{r.type}</p>
-                    <p className="text-xs text-slate-400">
-                      {r.id} · {r.date}
-                    </p>
-                    <p className="mt-1 max-w-xs text-xs text-slate-500">{r.purpose}</p>
-                  </td>
-                  <td className="p-3">{emp ? `${emp.firstName} ${emp.lastName}` : r.employeeId}</td>
-                  <td className="p-3">
-                    <p className="font-semibold">₹{r.amount.toLocaleString('en-IN')}</p>
-                    {r.recoveredAmount ? (
-                      <p className="text-xs text-emerald-700">
-                        Recovered: ₹{r.recoveredAmount.toLocaleString('en-IN')} · Bal: ₹
-                        {Math.max(0, (r.approvedAmount ?? r.amount) - r.recoveredAmount).toLocaleString('en-IN')}
+                return (
+                  <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50/50 transition-colors">
+                    <td className="p-3">
+                      <p className="font-semibold text-slate-900">{r.advanceType}</p>
+                      <p className="text-xs text-slate-400 font-mono">
+                        {r.id.slice(0, 18)} · {r.requestDate}
                       </p>
-                    ) : null}
-                  </td>
-                  <td className="p-3">
-                    {diff === undefined
-                      ? '-'
-                      : diff === 0
-                      ? 'Balanced'
-                      : diff > 0
-                      ? `₹${diff.toLocaleString('en-IN')} payable`
-                      : `₹${Math.abs(diff).toLocaleString('en-IN')} recoverable`}
-                  </td>
-                  <td className="p-3">
-                    <span
-                      className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-                        r.status === 'Settled' || r.status === 'Disbursed'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : r.status === 'Rejected'
-                          ? 'bg-rose-50 text-rose-700'
-                          : 'bg-amber-50 text-amber-800'
-                      }`}
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {canApprove && !isOwnRequest && r.status === 'Pending Approval' && (
-                        <>
-                          <button
-                            onClick={() => {
-                              update(r.id, { status: 'Approved', approvedAmount: r.amount });
-                              setMessage('Request approved. Disbursement remains a separate action.');
-                            }}
-                            className="rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => update(r.id, { status: 'Rejected' })}
-                            className="rounded bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700"
-                          >
-                            Reject
-                          </button>
-                        </>
+                      <p className="mt-1 max-w-xs text-xs text-slate-500">{r.purpose}</p>
+                    </td>
+                    <td className="p-3">
+                      <span className="font-mono text-xs font-semibold text-slate-800">{r.employeeId}</span>
+                    </td>
+                    <td className="p-3">
+                      <p className="font-semibold text-slate-900 font-mono">₹{r.amount.toLocaleString('en-IN')}</p>
+                      {r.recoveredAmount > 0 && (
+                        <p className="text-xs text-emerald-700">
+                          Recovered: ₹{r.recoveredAmount.toLocaleString('en-IN')} · Bal: ₹
+                          {Math.max(0, (r.approvedAmount ?? r.amount) - r.recoveredAmount).toLocaleString('en-IN')}
+                        </p>
                       )}
-
-                      {isHR && r.status === 'Approved' && (
-                        disbursingId === r.id ? (
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="text"
-                              value={disburseRefInput}
-                              onChange={(e) => setDisburseRefInput(e.target.value)}
-                              placeholder="UTR / Ref #"
-                              className="w-28 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
-                            />
+                    </td>
+                    <td className="p-3">
+                      {diff === undefined
+                        ? '-'
+                        : diff === 0
+                        ? 'Balanced'
+                        : diff > 0
+                        ? `₹${diff.toLocaleString('en-IN')} payable`
+                        : `₹${Math.abs(diff).toLocaleString('en-IN')} recoverable`}
+                      {r.settlementNote && (
+                        <p className="text-[10px] text-slate-400 block max-w-xs truncate">{r.settlementNote}</p>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                          r.status === 'Settled' || r.status === 'Disbursed'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : r.status === 'Rejected'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : r.status === 'Approved'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-amber-50 text-amber-800 border border-amber-200'
+                        }`}
+                      >
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {/* Approval actions for Manager/HR */}
+                        {canApprove && !isOwnRequest && r.status === 'Pending Approval' && (
+                          <>
                             <button
-                              onClick={() => confirmDisbursement(r.id)}
-                              className="rounded bg-indigo-600 px-2 py-1 text-xs font-semibold text-white"
+                              onClick={() => handleReview(r.id, 'Approved')}
+                              disabled={reviewingId === r.id}
+                              className="rounded bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors disabled:opacity-50"
                             >
-                              Save
+                              {reviewingId === r.id ? 'Saving...' : 'Approve'}
                             </button>
                             <button
-                              onClick={() => setDisbursingId(null)}
-                              className="rounded border px-1.5 py-1 text-xs text-slate-600"
+                              onClick={() => handleReview(r.id, 'Rejected')}
+                              disabled={reviewingId === r.id}
+                              className="rounded bg-rose-600 hover:bg-rose-700 px-2.5 py-1 text-xs font-semibold text-white transition-colors disabled:opacity-50"
                             >
-                              ✕
+                              {reviewingId === r.id ? 'Saving...' : 'Reject'}
                             </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setDisbursingId(r.id);
-                              setDisburseRefInput(`UTR-${Date.now().toString().slice(-6)}`);
-                            }}
-                            className="rounded bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"
-                          >
-                            Record disbursement
-                          </button>
-                        )
-                      )}
+                          </>
+                        )}
 
-                      {r.type === 'Travel Petty Cash' &&
-                        r.status === 'Disbursed' &&
-                        r.employeeId === currentUser.employeeId && (
+                        {/* Disbursement action for HR */}
+                        {isHR && r.status === 'Approved' && (
+                          disbursingId === r.id ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={disburseRefInput}
+                                onChange={(e) => setDisburseRefInput(e.target.value)}
+                                placeholder="UTR / Bank Ref"
+                                className="w-28 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
+                                disabled={isDisbursing}
+                              />
+                              <button
+                                onClick={() => confirmDisbursement(r.id)}
+                                disabled={isDisbursing || !disburseRefInput.trim()}
+                                className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                              >
+                                {isDisbursing ? '...' : 'Save'}
+                              </button>
+                              <button
+                                onClick={() => setDisbursingId(null)}
+                                className="rounded border px-1.5 py-1 text-xs text-slate-600 hover:bg-slate-100"
+                                disabled={isDisbursing}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setDisbursingId(r.id);
+                                setDisburseRefInput(`UTR-${Date.now().toString().slice(-6)}`);
+                              }}
+                              className="rounded bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700 border border-indigo-200 transition-colors"
+                            >
+                              Record disbursement
+                            </button>
+                          )
+                        )}
+
+                        {/* Settlement action for Employee */}
+                        {r.advanceType === 'Travel Petty Cash' &&
+                          r.status === 'Disbursed' &&
+                          isOwnRequest && (
+                            <button
+                              onClick={() => {
+                                setSettleRecord(r);
+                                setActual('');
+                                setNote('');
+                              }}
+                              className="rounded bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700 border border-emerald-200 transition-colors"
+                            >
+                              Settle Expenses
+                            </button>
+                          )}
+
+                        {/* Review & Close for HR */}
+                        {isHR && r.status === 'Settlement Pending' && (
                           <button
                             onClick={() => {
                               setSettleRecord(r);
-                              setActual('');
-                              setNote('');
+                              setActual(r.actualExpense ? String(r.actualExpense) : '');
+                              setNote(r.settlementNote || '');
                             }}
-                            className="rounded bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"
+                            className="rounded bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700 border border-emerald-200"
                           >
-                            Settle
+                            <CheckCircle2 size={12} className="mr-1 inline" />
+                            Review & Close
                           </button>
                         )}
 
-                      {isHR && r.status === 'Settlement Pending' && (
-                        <button
-                          onClick={() => {
-                            update(r.id, { status: 'Settled' });
-                            setMessage(
-                              'Settlement marked reviewed. Ensure any refund or additional reimbursement is separately recorded.'
-                            );
-                          }}
-                          className="rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700"
-                        >
-                          <CheckCircle2 size={12} className="mr-1 inline" />
-                          Review & close
-                        </button>
-                      )}
-
-                      {r.paymentReference && (
-                        <span className="self-center text-[10px] font-mono text-slate-400">
-                          Ref: {r.paymentReference}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {visible.length === 0 && (
-              <tr>
-                <td colSpan={6} className="p-10 text-center text-sm text-slate-500">
-                  No advance or petty cash requests yet.
-                </td>
-              </tr>
+                        {r.paymentReference && (
+                          <span className="self-center text-[10px] font-mono text-slate-400">
+                            Ref: {r.paymentReference}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -498,7 +553,7 @@ export const AdvancePettyCash: React.FC = () => {
 
       <p className="text-xs text-slate-400">
         <ArrowLeftRight size={12} className="mr-1 inline" />
-        Disbursed salary advances automatically flow into payroll calculation previews up to the outstanding balance.
+        Disbursed salary advances are audited and persist in the PostgreSQL database.
       </p>
     </div>
   );
@@ -507,7 +562,7 @@ export const AdvancePettyCash: React.FC = () => {
 const Summary: React.FC<{ icon: React.ElementType; title: string; value: string }> = ({
   icon: Icon,
   title,
-  value
+  value,
 }) => (
   <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4">
     <div className="rounded-lg bg-indigo-50 p-2.5 text-indigo-700">

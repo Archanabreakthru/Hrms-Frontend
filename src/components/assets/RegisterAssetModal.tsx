@@ -19,7 +19,7 @@ export const RegisterAssetModal: React.FC<RegisterAssetModalProps> = ({
   const { currentUser } = useAuth();
   const assets = db.getAssets();
 
-  const nextTag = `ORBYX-AST-${String(assets.length + 1).padStart(3, '0')}`;
+  const nextTag = `Celestial-AST-${String(assets.length + 1).padStart(3, '0')}`;
   const [name, setName] = useState('');
   const [category, setCategory] = useState<AssetCategoryType>('Laptop');
   const [brand, setBrand] = useState('Apple');

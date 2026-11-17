@@ -267,7 +267,7 @@ export const ReportsHub: React.FC = () => {
                 ? expenseSummaryData
                 : clientReportData
             }
-            fileName={`Orbyx_Report_${reportType}`}
+            fileName={`Celestial_Report_${reportType}`}
           />
         </div>
       </div>

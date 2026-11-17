@@ -102,7 +102,7 @@ export const hrmsService = {
     db.addNotification({
       targetUserId: 'all',
       title: 'New Team Member',
-      message: `${newEmp.firstName} ${newEmp.lastName} has joined Orbyx!`,
+      message: `${newEmp.firstName} ${newEmp.lastName} has joined Celestial!`,
       module: 'employee'
     });
 
@@ -1439,7 +1439,7 @@ export const hrmsService = {
         : `  • Date: ${matchedCorr?.date} | In: ${matchedCorr?.requestedCheckIn} | Out: ${matchedCorr?.requestedCheckOut} | Worked: ${matchedCorr?.calculatedHours || 8}h | Reason: ${matchedCorr?.reason}`;
 
     // Strictly omit confidential employee fields (no salary, bank details, PAN, home address, or personal phone)
-    const subject = `[Orbyx HRMS Verification ${referenceId}] Attendance Confirmation Request - ${emp.firstName} ${emp.lastName} (${emp.id}) | ${projectName}`;
+    const subject = `[Celestial HRMS Verification ${referenceId}] Attendance Confirmation Request - ${emp.firstName} ${emp.lastName} (${emp.id}) | ${projectName}`;
     const body = [
       `Dear ${supervisorName},`,
       ``,
@@ -1455,14 +1455,14 @@ export const hrmsService = {
       linesSummary,
       params.notes ? `\nAdditional Context: ${params.notes}` : '',
       ``,
-      `INSTRUCTIONS FOR EXTERNAL EMAIL CONFIRMATION (NO ORBYX LOGIN REQUIRED):`,
+      `INSTRUCTIONS FOR EXTERNAL EMAIL CONFIRMATION (NO Celestial LOGIN REQUIRED):`,
       `Please reply directly to this email quoting Reference ID [${referenceId}] with one of the following:`,
       `  1. "CONFIRMED / VERIFIED" - if the recorded dates, check-in/check-out times, and working hours are accurate.`,
       `  2. "DISPUTED / CORRECTION REQUESTED" - if any date, timestamp, or working hour is inaccurate (please specify the actual hours/times observed at the client site).`,
       ``,
       `Thank you,`,
       `${actorName}`,
-      `Orbyx Human Resources & Delivery Operations`
+      `Celestial Human Resources & Delivery Operations`
     ]
       .filter(Boolean)
       .join('\n');
@@ -1567,7 +1567,7 @@ export const hrmsService = {
     // Enforce Section 3: Only authorized internal users can record client email confirmations; no external client logins, no self-verification by employee
     if (!permissionService.canRecordClientEmailVerification(actor as any, resolvedEmpId)) {
       const msg =
-        'Unauthorized: Only authorized internal Orbyx HR Administrators, Reporting Managers, or Senior Management may record external client email verification responses. Employees cannot self-verify their own attendance.';
+        'Unauthorized: Only authorized internal Celestial HR Administrators, Reporting Managers, or Senior Management may record external client email verification responses. Employees cannot self-verify their own attendance.';
       return { success: false, error: msg, message: msg };
     }
 
@@ -1789,7 +1789,7 @@ export const hrmsService = {
       confirmedByEmail: data.senderEmail,
       emailSubject:
         data.emailSubject ||
-        `RE: [Orbyx HRMS] Attendance Verification (${emp.firstName} ${emp.lastName} - ${startDate})`,
+        `RE: [Celestial HRMS] Attendance Verification (${emp.firstName} ${emp.lastName} - ${startDate})`,
       confirmationDate: data.emailReceivedAt.slice(0, 10) || todayStr,
       confirmedAt: data.emailReceivedAt.slice(0, 10) || todayStr,
       emailReceivedAt: data.emailReceivedAt,
@@ -1974,7 +1974,7 @@ export const hrmsService = {
             actorRole: 'External Client Supervisor',
             timestamp: nowIso,
             decision: 'Verified',
-            comments: params.notes || 'Recorded and verified directly via Client Supervisor Portal. Forwarded to Orbyx Internal HR for Stage 2 Final Approval.'
+            comments: params.notes || 'Recorded and verified directly via Client Supervisor Portal. Forwarded to Celestial Internal HR for Stage 2 Final Approval.'
           }
         ];
       } else {
@@ -2013,7 +2013,7 @@ export const hrmsService = {
 
     return {
       success: true,
-      message: `Successfully submitted ${updatedCount} attendance record(s) to Orbyx Internal HR approval queue.`,
+      message: `Successfully submitted ${updatedCount} attendance record(s) to Celestial Internal HR approval queue.`,
       updatedCount
     };
   },
