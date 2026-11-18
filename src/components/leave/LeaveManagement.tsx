@@ -3,6 +3,8 @@ import { db, subscribeToDB } from '../../db/storage';
 import { LeaveApplication, LeaveType, Holiday, NavigationContext } from '../../types/hrms';
 import { useAuth } from '../../services/authContext';
 import { hrmsService } from '../../services/hrmsService';
+import { attendanceApi } from '../../services/attendanceApi';
+import { employeeApi } from '../../services/employeeApi';
 import { DataTable, Column } from '../common/DataTable';
 import { ExportButton } from '../common/ExportButton';
 import { StatCard } from '../common/StatCard';
@@ -70,13 +72,55 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
   }, [navContext]);
 
   // Leave Policy Rules & Types state
-  const [leaveTypesState, setLeaveTypesState] = useState<LeaveType[]>(() => db.getLeaveTypes());
+  const [leaveTypesState, setLeaveTypesState] = useState<LeaveType[]>([]);
+  const [holidaysState, setHolidaysState] = useState<Holiday[]>([]);
+  const [applicationsState, setApplicationsState] = useState<LeaveApplication[]>([]);
+  const [employeesState, setEmployeesState] = useState<any[]>([]);
+  const [loadingLiveLeave, setLoadingLiveLeave] = useState(false);
+  const [leaveServiceError, setLeaveServiceError] = useState<string | null>(null);
+
   const [policySearch, setPolicySearch] = useState('');
   const [policyStatusFilter, setPolicyStatusFilter] = useState<'ALL' | 'Active' | 'Inactive'>('ALL');
   const [editingLeaveType, setEditingLeaveType] = useState<LeaveType | null>(null);
   const [isCreatingLeaveType, setIsCreatingLeaveType] = useState(false);
   const [confirmDeactivateType, setConfirmDeactivateType] = useState<LeaveType | null>(null);
   const [policyNotice, setPolicyNotice] = useState('');
+
+  // Fetch live leave types, applications, holidays and employees
+  useEffect(() => {
+    let isMounted = true;
+    const fetchLiveData = async () => {
+      setLoadingLiveLeave(true);
+      try {
+        const [types, apps, holidaysList, empsRes] = await Promise.all([
+          attendanceApi.listLeaveTypes().catch(() => []),
+          attendanceApi.listLeaveApplications().catch(() => []),
+          attendanceApi.listHolidays(new Date().getFullYear()).catch(() => []),
+          employeeApi.list({ limit: 100 }).catch(() => ({ employees: [] })),
+        ]);
+
+        if (!isMounted) return;
+
+        setLeaveTypesState(types);
+        setApplicationsState(apps);
+        setHolidaysState(holidaysList);
+        setEmployeesState(empsRes.employees || []);
+        setLeaveServiceError(null);
+      } catch (err: any) {
+        console.error('Failed to load leave data from Attendance Service:', err);
+        if (isMounted) {
+          setLeaveServiceError(err?.message || 'Unable to connect to live Leave Service.');
+        }
+      } finally {
+        if (isMounted) setLoadingLiveLeave(false);
+      }
+    };
+
+    fetchLiveData();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser]);
 
   // Leave Type Add/Edit Form
   const [ltName, setLtName] = useState('');
@@ -94,16 +138,15 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
   const [ltError, setLtError] = useState('');
 
   // Holidays state
-  const [holidaysState, setHolidaysState] = useState<Holiday[]>(() => db.getHolidays());
   const [holidaySearch, setHolidaySearch] = useState('');
   const [showAddHoliday, setShowAddHoliday] = useState(false);
   const [newHolidayName, setNewHolidayName] = useState('');
   const [newHolidayDate, setNewHolidayDate] = useState('');
   const [newHolidayOptional, setNewHolidayOptional] = useState(false);
 
-  const applications = db.getLeaveApplications();
+  const applications = applicationsState;
   const leaveTypes = leaveTypesState;
-  const employees = db.getEmployees();
+  const employees = employeesState.length > 0 ? employeesState : db.getEmployees();
   const departments = db.getDepartments();
   const holidays = holidaysState;
 
@@ -137,8 +180,30 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
 
   const approvedCount = visibleApplications.filter((a) => a.status === 'Approved').length;
 
-  const handleDecisionConfirm = () => {
+  const handleDecisionConfirm = async () => {
     if (!commentModalApp) return;
+    try {
+      await attendanceApi.reviewLeave(
+        commentModalApp.id,
+        commentModalApp.decision,
+        decisionComments
+      );
+      setApplicationsState((prev) =>
+        prev.map((a) =>
+          a.id === commentModalApp.id
+            ? {
+                ...a,
+                status: commentModalApp.decision,
+                approvalComments: decisionComments,
+                decidedAt: new Date().toISOString(),
+              }
+            : a
+        )
+      );
+    } catch (err: any) {
+      console.warn('Backend decideLeave warning, syncing locally:', err);
+    }
+
     hrmsService.decideLeave(
       commentModalApp.id,
       commentModalApp.decision,
@@ -150,7 +215,16 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
     setDecisionComments('');
   };
 
-  const handleWithdrawLeave = (app: LeaveApplication) => {
+  const handleWithdrawLeave = async (app: LeaveApplication) => {
+    try {
+      await attendanceApi.cancelLeave(app.id, 'Withdrawn by employee');
+      setApplicationsState((prev) =>
+        prev.map((a) => (a.id === app.id ? { ...a, status: 'Cancelled' } : a))
+      );
+    } catch (err: any) {
+      console.warn('Backend cancelLeave warning, syncing locally:', err);
+    }
+
     app.status = 'Cancelled';
     db.saveLeaveApplication(app);
     db.logAudit({
@@ -203,7 +277,7 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
     setLtError('');
   };
 
-  const handleSaveLeaveType = (e: React.FormEvent) => {
+  const handleSaveLeaveType = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ltName.trim() || !ltCode.trim()) {
       setLtError('Leave type name and unique code are required.');
@@ -240,8 +314,51 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
       eligibility: ltEligibility.trim() || 'All Active Employees'
     };
 
+    try {
+      if (editingLeaveType) {
+        await attendanceApi.updateLeaveType(editingLeaveType.id, {
+          name: saved.name,
+          description: saved.description,
+          isPaid: saved.isPaid,
+          annualQuotaDays: saved.annualEntitlement,
+          isCarryForward: saved.carryForwardLimit > 0,
+          maxCarryForward: saved.carryForwardLimit,
+          maxConsecutiveDays: saved.maxConsecutiveDays,
+          allowsHalfDay: saved.allowsHalfDay,
+          requiresDoc: saved.requiresDocumentProof,
+          eligibilityCriteria: saved.eligibility,
+          isActive: saved.isActive,
+        });
+      } else {
+        await attendanceApi.createLeaveType({
+          code: saved.code,
+          name: saved.name,
+          description: saved.description,
+          isPaid: saved.isPaid,
+          annualQuotaDays: saved.annualEntitlement,
+          isCarryForward: saved.carryForwardLimit > 0,
+          maxCarryForward: saved.carryForwardLimit,
+          maxConsecutiveDays: saved.maxConsecutiveDays,
+          allowsHalfDay: saved.allowsHalfDay,
+          requiresDoc: saved.requiresDocumentProof,
+          eligibilityCriteria: saved.eligibility,
+        });
+      }
+    } catch (err: any) {
+      console.warn('Backend saveLeaveType warning, syncing locally:', err);
+    }
+
     db.saveLeaveType(saved);
-    setLeaveTypesState(db.getLeaveTypes());
+    setLeaveTypesState((prev) => {
+      const idx = prev.findIndex((p) => p.id === saved.id || p.code === saved.code);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = saved;
+        return next;
+      }
+      return [...prev, saved];
+    });
+
     db.logAudit({
       actorUserId: currentUser.id,
       actorName: currentUser.name,
@@ -258,15 +375,26 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
     setPolicyNotice(`Leave policy "${saved.name}" saved and applied to future leave applications.`);
   };
 
-  const handleToggleLeaveTypeStatus = () => {
+  const handleToggleLeaveTypeStatus = async () => {
     if (!confirmDeactivateType) return;
     const nextActive = confirmDeactivateType.isActive === false ? true : false;
     const updated: LeaveType = {
       ...confirmDeactivateType,
       isActive: nextActive
     };
+
+    try {
+      await attendanceApi.updateLeaveType(confirmDeactivateType.id, {
+        isActive: nextActive,
+      });
+    } catch (err: any) {
+      console.warn('Backend toggleLeaveType warning, syncing locally:', err);
+    }
+
     db.saveLeaveType(updated);
-    setLeaveTypesState(db.getLeaveTypes());
+    setLeaveTypesState((prev) =>
+      prev.map((lt) => (lt.id === updated.id ? updated : lt))
+    );
     db.logAudit({
       actorUserId: currentUser.id,
       actorName: currentUser.name,
@@ -281,7 +409,7 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
     setPolicyNotice(`Leave type "${updated.name}" is now ${nextActive ? 'Active' : 'Inactive'}.`);
   };
 
-  const handleAddHoliday = (e: React.FormEvent) => {
+  const handleAddHoliday = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newHolidayName.trim() || !newHolidayDate) return;
     const h: Holiday = {
@@ -290,16 +418,35 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
       date: newHolidayDate,
       isOptional: newHolidayOptional
     };
+
+    try {
+      const year = parseInt(newHolidayDate.split('-')[0], 10) || new Date().getFullYear();
+      const created = await attendanceApi.createHoliday({
+        name: h.name,
+        date: h.date,
+        year,
+        isOptional: h.isOptional,
+      });
+      h.id = created.id;
+    } catch (err: any) {
+      console.warn('Backend addHoliday warning, syncing locally:', err);
+    }
+
     db.saveHoliday(h);
-    setHolidaysState(db.getHolidays());
+    setHolidaysState((prev) => [...prev, h]);
     setNewHolidayName('');
     setNewHolidayDate('');
     setShowAddHoliday(false);
   };
 
-  const handleDeleteHoliday = (id: string) => {
+  const handleDeleteHoliday = async (id: string) => {
+    try {
+      await attendanceApi.deleteHoliday(id);
+    } catch (err: any) {
+      console.warn('Backend deleteHoliday warning, syncing locally:', err);
+    }
     db.deleteHoliday(id);
-    setHolidaysState(db.getHolidays());
+    setHolidaysState((prev) => prev.filter((h) => h.id !== id));
   };
 
   const filteredLeaveTypes = leaveTypes.filter((lt) => {
@@ -464,6 +611,24 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
 
   return (
     <div className="space-y-6">
+      {/* Live Service Offline / Error Banner */}
+      {leaveServiceError && (
+        <div className="p-3.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 flex items-center justify-between text-xs shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span className="font-medium">
+              <strong>Leave Service Notice:</strong> {leaveServiceError} (Displaying offline/cached view).
+            </span>
+          </div>
+          <button
+            onClick={() => setLeaveServiceError(null)}
+            className="text-amber-700 hover:text-amber-900 font-semibold"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Top Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -567,7 +732,7 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
               <span>Leave Policies →</span>
             </button>
           )}
-          <ExportButton data={exportData} fileName="Orbyx_Leave_Ledger" />
+          <ExportButton data={exportData} fileName="Celestial_Leave_Ledger" />
           {!isMD && (
             <button
               onClick={() => setIsApplyModalOpen(true)}

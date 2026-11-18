@@ -1,4 +1,4 @@
-// Orbyx HRMS - Authenticated User Profile & Logout Component
+// Celestial HRMS - Authenticated User Profile & Logout Component
 // Replaces the demonstration PersonaSwitcher in the Global Header
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../services/authContext';

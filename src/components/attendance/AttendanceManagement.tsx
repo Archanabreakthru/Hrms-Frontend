@@ -1,4 +1,4 @@
-// Orbyx HRMS - Attendance & Shifts (Corrected Targeted Implementation)
+// Celestial HRMS - Attendance & Shifts (Corrected Targeted Implementation)
 // 1. Top Attendance Action Bar with Live Punch Actions (State 1: Not Checked In, State 2: Checked In -> Record Check-Out, State 3: Checked Out with working hours)
 // 2. Clear Separation of 3 Distinct Actions:
 //    A. Normal Check-in / Check-out (Top action bar)
@@ -49,6 +49,8 @@ import { EmployeeCorrectionModal } from './EmployeeCorrectionModal';
 import { HRManualEntryModal } from './HRManualEntryModal';
 import { clientAttendanceIntegration } from '../clients/clientAttendanceIntegration';
 import { db, subscribeToDB } from '../../db/storage';
+import { attendanceApi } from '../../services/attendanceApi';
+import { employeeApi } from '../../services/employeeApi';
 
 interface AttendanceManagementProps {
   navContext?: any;
@@ -60,6 +62,8 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
 
   // Role resolution
   const isHR =
+    currentUser?.role === 'super_admin' ||
+    currentUser?.role === 'admin' ||
     currentUser?.role === 'hr_admin' ||
     currentUser?.role === 'senior_manager';
 
@@ -73,134 +77,190 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
   // Navigation tab state for Employee
   const [activeEmpTab, setActiveEmpTab] = useState<'history' | 'corrections' | 'overtime'>('history');
 
-  // In-Memory Frontend Session State (No Database, No Persistence)
-  const [shifts, setShifts] = useState<ShiftDefinitionRecord[]>([
-    {
-      id: 'SHIFT-GEN',
-      name: 'General Day Shift',
-      code: 'GEN-01',
-      startTime: '09:30',
-      endTime: '18:30',
-      breakDurationMinutes: 60,
-      totalWorkingHours: 8,
-      gracePeriodMinutes: 15,
-      lateArrivalThresholdMinutes: 30,
-      earlyDepartureThresholdMinutes: 30,
-      weeklyOffDays: [0, 6],
-      workdaysCount: 5,
-      isOvernight: false,
-      isActive: true
-    },
-    {
-      id: 'SHIFT-MORNING',
-      name: 'Early Morning Shift',
-      code: 'MOR-01',
-      startTime: '08:00',
-      endTime: '17:00',
-      breakDurationMinutes: 60,
-      totalWorkingHours: 8,
-      gracePeriodMinutes: 15,
-      lateArrivalThresholdMinutes: 30,
-      earlyDepartureThresholdMinutes: 30,
-      weeklyOffDays: [0, 6],
-      workdaysCount: 5,
-      isOvernight: false,
-      isActive: true
-    },
-    {
-      id: 'SHIFT-EVENING',
-      name: 'Evening Shift',
-      code: 'EVE-01',
-      startTime: '13:00',
-      endTime: '22:00',
-      breakDurationMinutes: 60,
-      totalWorkingHours: 8,
-      gracePeriodMinutes: 15,
-      lateArrivalThresholdMinutes: 30,
-      earlyDepartureThresholdMinutes: 30,
-      weeklyOffDays: [0, 6],
-      workdaysCount: 5,
-      isOvernight: false,
-      isActive: true
-    },
-    {
-      id: 'SHIFT-NIGHT',
-      name: 'Night Shift',
-      code: 'NGT-01',
-      startTime: '21:00',
-      endTime: '06:00',
-      breakDurationMinutes: 60,
-      totalWorkingHours: 8,
-      gracePeriodMinutes: 15,
-      lateArrivalThresholdMinutes: 30,
-      earlyDepartureThresholdMinutes: 30,
-      weeklyOffDays: [0, 6],
-      workdaysCount: 5,
-      isOvernight: true,
-      isActive: true
-    }
-  ]);
-
+  // Shift & Schedule Form State
+  const [shifts, setShifts] = useState<ShiftDefinitionRecord[]>([]);
   const [schedules, setSchedules] = useState<ShiftScheduleEntry[]>([]);
-  const [attendanceRecords, setAttendanceRecords] = useState<DailyAttendanceRecord[]>(() => {
-    return db.getAttendanceRecords().map((r) => ({
-      id: r.id,
-      employeeId: r.employeeId,
-      employeeName: (db.getEmployeeById(r.employeeId)?.firstName ? `${db.getEmployeeById(r.employeeId)?.firstName} ${db.getEmployeeById(r.employeeId)?.lastName}` : r.employeeId),
-      date: r.date,
-      shiftId: r.shiftId || 'SHIFT-GEN',
-      shiftName: 'General Day Shift (09:30 - 18:30)',
-      checkInTime: r.checkInTime,
-      checkOutTime: r.checkOutTime,
-      totalHours: r.totalHoursWorked || 0,
-      netWorkingHours: r.totalHoursWorked || 0,
-      breakDurationMinutes: 60,
-      overtimeHours: r.overtimeHours || 0,
-      isLate: Boolean(r.isLate),
-      lateMinutes: r.lateMinutes || 0,
-      isEarlyDeparture: Boolean(r.isEarlyDeparture),
-      isMissingPunch: Boolean(r.checkInTime && !r.checkOutTime),
-      status: (r.status as AttendancePunchStatus) || 'Present',
-      workLocationType: (r.workMode === 'Client Site' ? 'Client Site' : r.workMode === 'Remote' ? 'Remote' : 'Office') as 'Client Site' | 'Remote' | 'Office',
-      source: 'Web Punch'
-    }));
-  });
+  const [attendanceRecords, setAttendanceRecords] = useState<DailyAttendanceRecord[]>([]);
+  const [isLoadingLiveAttendance, setIsLoadingLiveAttendance] = useState(false);
+  const [liveAttendanceError, setLiveAttendanceError] = useState<string | null>(null);
   const [corrections, setCorrections] = useState<AttendanceCorrectionEntry[]>([]);
   const [overtimeEntries, setOvertimeEntries] = useState<OvertimeEntry[]>([]);
+  const [allEmployees, setAllEmployees] = useState<Array<{ id: string; name: string }>>([]);
 
-  // Synchronize attendance records from storage & integration layer
-  useEffect(() => {
-    const syncAttendance = () => {
-      const dbRecs: DailyAttendanceRecord[] = db.getAttendanceRecords().map((r) => ({
-        id: r.id,
-        employeeId: r.employeeId,
-        employeeName: (db.getEmployeeById(r.employeeId)?.firstName ? `${db.getEmployeeById(r.employeeId)?.firstName} ${db.getEmployeeById(r.employeeId)?.lastName}` : r.employeeId),
-        date: r.date,
-        shiftId: r.shiftId || 'SHIFT-GEN',
-        shiftName: 'General Day Shift (09:30 - 18:30)',
-        checkInTime: r.checkInTime,
-        checkOutTime: r.checkOutTime,
-        totalHours: r.totalHoursWorked || 0,
-        netWorkingHours: r.totalHoursWorked || 0,
-        breakDurationMinutes: 60,
-        overtimeHours: r.overtimeHours || 0,
-        isLate: Boolean(r.isLate),
-        lateMinutes: r.lateMinutes || 0,
-        isEarlyDeparture: Boolean(r.isEarlyDeparture),
-        isMissingPunch: Boolean(r.checkInTime && !r.checkOutTime),
-        status: (r.status as AttendancePunchStatus) || 'Present',
-        workLocationType: (r.workMode === 'Client Site' ? 'Client Site' : r.workMode === 'Remote' ? 'Remote' : 'Office') as 'Client Site' | 'Remote' | 'Office',
-        source: 'Web Punch'
+  // Fetch live attendance records, shifts, schedules, regularizations, and employees from live APIs
+  const fetchLiveRecords = async () => {
+    setIsLoadingLiveAttendance(true);
+    try {
+      const [records, shiftsList, schedulesList, regularizationsList, empRes] = await Promise.all([
+        attendanceApi.listRecords().catch(() => []),
+        attendanceApi.listShifts().catch(() => []),
+        attendanceApi.listShiftSchedules().catch(() => []),
+        attendanceApi.listRegularizations().catch(() => []),
+        employeeApi.list({ limit: 100 }).catch(() => ({ employees: [] })),
+      ]);
+
+      const empMap = new Map<string, string>();
+      const employeeOptions: Array<{ id: string; name: string }> = [];
+      (empRes.employees || []).forEach((e) => {
+        const fullName = `${e.firstName} ${e.lastName}`.trim();
+        empMap.set(e.id, fullName);
+        employeeOptions.push({ id: e.id, name: fullName });
+      });
+      setAllEmployees(employeeOptions);
+
+      const shiftMap = new Map<string, string>();
+      shiftsList.forEach((s) => {
+        shiftMap.set(s.id, s.name);
+        shiftMap.set(s.code, s.name);
+      });
+
+      if (shiftsList.length > 0) {
+        setShifts(
+          shiftsList.map((s) => ({
+            id: s.id,
+            name: s.name,
+            code: s.code,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            gracePeriodMinutes: s.gracePeriodMinutes,
+            lateArrivalThresholdMinutes: 15,
+            earlyDepartureThresholdMinutes: 15,
+            breakDurationMinutes: s.breakDurationMinutes,
+            totalWorkingHours: s.totalWorkingHours,
+            workdaysCount: 5,
+            isOvernight: s.isOvernight,
+            weeklyOffDays: s.weeklyOffDays,
+            isActive: s.isActive ?? true,
+          }))
+        );
+      } else {
+        setShifts([]);
+      }
+
+      // Map Shift Schedules
+      const mappedSchedules: ShiftScheduleEntry[] = (schedulesList || []).map((sc: any) => ({
+        id: sc.id,
+        employeeId: sc.employeeId,
+        employeeName: empMap.get(sc.employeeId) || sc.employeeId,
+        shiftId: sc.shiftId,
+        shiftName: shiftMap.get(sc.shiftId) || sc.shiftName || 'Standard Shift',
+        startDate: sc.effectiveFrom ? String(sc.effectiveFrom).split('T')[0] : '',
+        endDate: sc.effectiveTo ? String(sc.effectiveTo).split('T')[0] : '',
+        assignedBy: sc.assignedBy || 'HR Admin',
+        assignedAt: sc.createdAt || new Date().toISOString()
       }));
-      setAttendanceRecords(dbRecs);
-    };
-    const unsubDB = subscribeToDB(syncAttendance);
-    const unsubInteg = clientAttendanceIntegration.subscribe(syncAttendance);
+      setSchedules(mappedSchedules);
+
+      // Map Attendance Records
+      const mappedRecords: DailyAttendanceRecord[] = (records || []).map((r) => {
+        const validSource = (r.source === 'Manual HR Entry'
+          ? 'Manual HR Entry'
+          : r.source === 'Attendance Correction'
+            ? 'Correction Regularization'
+            : 'Web Punch') as 'Web Punch' | 'Manual HR Entry' | 'Correction Regularization';
+
+        return {
+          id: r.id,
+          employeeId: r.employeeId,
+          employeeName: empMap.get(r.employeeId) || r.employeeId,
+          date: r.date,
+          shiftId: r.shiftId || 'SHIFT-GEN',
+          shiftName: shiftMap.get(r.shiftId) || 'General Day Shift (09:30 - 18:30)',
+          checkInTime: r.checkInTime,
+          checkOutTime: r.checkOutTime,
+          totalHours: r.totalHoursWorked || 0,
+          netWorkingHours: r.totalHoursWorked || 0,
+          breakDurationMinutes: 60,
+          overtimeHours: r.overtimeHours || 0,
+          isLate: Boolean(r.isLate),
+          lateMinutes: r.lateMinutes || 0,
+          isEarlyDeparture: Boolean(r.isEarlyDeparture),
+          isMissingPunch: Boolean(r.checkInTime && !r.checkOutTime),
+          status: (r.status as AttendancePunchStatus) || 'Present',
+          workLocationType: (r.workMode === 'Client Site' ? 'Client Site' : r.workMode === 'Remote' ? 'Remote' : 'Office') as 'Client Site' | 'Remote' | 'Office',
+          source: validSource,
+        };
+      });
+      setAttendanceRecords(mappedRecords);
+
+      // Map Regularizations
+      const mappedCorrections: AttendanceCorrectionEntry[] = (regularizationsList || []).map((reg: any) => {
+        let calcHours = 0;
+        if (reg.requestedCheckIn && reg.requestedCheckOut) {
+          const inT = reg.requestedCheckIn.includes('T') ? reg.requestedCheckIn.split('T')[1].substring(0, 5) : reg.requestedCheckIn;
+          const outT = reg.requestedCheckOut.includes('T') ? reg.requestedCheckOut.split('T')[1].substring(0, 5) : reg.requestedCheckOut;
+          const [inH, inM] = inT.split(':').map(Number);
+          const [outH, outM] = outT.split(':').map(Number);
+          let totalMins = outH * 60 + outM - (inH * 60 + inM);
+          if (totalMins < 0) totalMins += 24 * 60;
+          calcHours = Math.max(0, +(totalMins / 60 - 1).toFixed(2));
+        }
+
+        const reqIn = reg.requestedCheckIn ? (reg.requestedCheckIn.includes('T') ? reg.requestedCheckIn.split('T')[1].substring(0, 5) : reg.requestedCheckIn) : '09:30';
+        const reqOut = reg.requestedCheckOut ? (reg.requestedCheckOut.includes('T') ? reg.requestedCheckOut.split('T')[1].substring(0, 5) : reg.requestedCheckOut) : '18:30';
+
+        return {
+          id: reg.id,
+          employeeId: reg.employeeId,
+          employeeName: empMap.get(reg.employeeId) || reg.employeeId,
+          attendanceDate: reg.targetDate ? String(reg.targetDate).split('T')[0] : '',
+          originalCheckIn: undefined,
+          originalCheckOut: undefined,
+          originalStatus: 'Absent',
+          requestedCheckIn: reqIn,
+          requestedCheckOut: reqOut,
+          requestedOutcome: calcHours >= 8 ? 'Present' : 'Half Day',
+          calculatedHours: calcHours,
+          reasonCategory: reg.reason || 'Correction Request',
+          reasonRemarks: reg.reason || '',
+          status: (reg.status as CorrectionRequestStatus) || 'Pending Manager Approval',
+          managerComments: reg.managerRemarks,
+          managerDecision: reg.status === 'Pending HR Approval' || reg.status === 'HR Approved' ? 'Approved' : reg.status === 'Manager Rejected' ? 'Rejected' : undefined,
+          hrComments: reg.hrRemarks,
+          hrDecision: reg.status === 'HR Approved' ? 'Approved' : reg.status === 'HR Rejected' ? 'Rejected' : undefined,
+          submittedAt: reg.createdAt || new Date().toISOString()
+        };
+      });
+      setCorrections(mappedCorrections);
+
+      // Derive Overtime Entries from Attendance Records that had overtimeHours > 0
+      const derivedOT: OvertimeEntry[] = mappedRecords
+        .filter((r) => r.overtimeHours > 0)
+        .map((r) => ({
+          id: `OT-${r.id}`,
+          employeeId: r.employeeId,
+          employeeName: r.employeeName,
+          attendanceDate: r.date,
+          shiftName: r.shiftName,
+          standardHours: 8,
+          actualHours: +(r.netWorkingHours + 8).toFixed(2),
+          overtimeHours: r.overtimeHours,
+          overtimeReason: 'Extended operational workload',
+          status: 'Ready for Future Payroll Integration',
+          submittedAt: new Date().toISOString()
+        }));
+      setOvertimeEntries(derivedOT);
+
+      setLiveAttendanceError(null);
+    } catch (err: any) {
+      console.error('Failed to fetch live attendance from Attendance Service:', err);
+      setLiveAttendanceError(err?.message || 'Unable to connect to live Attendance Service.');
+    } finally {
+      setIsLoadingLiveAttendance(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveRecords();
+
+    const unsubInteg = clientAttendanceIntegration.subscribe(() => {
+      fetchLiveRecords();
+    });
+
     return () => {
-      unsubDB();
       unsubInteg();
     };
-  }, []);
+  }, [currentUser]);
 
   // HR Manual Entries Log
   const [hrManualAuditLogs, setHrManualAuditLogs] = useState<
@@ -284,194 +344,124 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
   // -------------------------------------------------------------
   // ACTION A: LIVE CHECK-IN / CHECK-OUT (TOP ACTION BAR)
   // -------------------------------------------------------------
-  const handleCheckIn = () => {
+  const handleCheckIn = async () => {
     if (myTodayRecord?.checkInTime) return; // Prevent duplicate check-in
 
+    const empId = currentUser?.employeeId || 'EMP-001';
     const now = new Date();
     const timeStr = now.toTimeString().substring(0, 5);
-    const isLate = timeStr > '09:45';
 
-    const newRecord: DailyAttendanceRecord = {
-      id: `ATT-${Date.now().toString().slice(-4)}`,
-      employeeId: currentUser?.employeeId || 'EMP-ME',
-      employeeName: currentUser?.name || 'Current User',
-      date: todayStr,
-      shiftId: 'SHIFT-GEN',
-      shiftName: 'General Day Shift (09:30 - 18:30)',
-      checkInTime: timeStr,
-      totalHours: 0,
-      netWorkingHours: 0,
-      breakDurationMinutes: 60,
-      overtimeHours: 0,
-      isLate,
-      lateMinutes: isLate ? 15 : 0,
-      isEarlyDeparture: false,
-      isMissingPunch: true,
-      status: isLate ? 'Late' : 'Present',
-      workLocationType: punchWorkMode,
-      source: 'Web Punch'
-    };
-
-    setAttendanceRecords((prev) => [
-      newRecord,
-      ...prev.filter(
-        (r) =>
-          !(
-            r.date === todayStr &&
-            (r.employeeId === (currentUser?.employeeId || 'EMP-ME') ||
-              r.employeeName === currentUser?.name)
-          )
-      )
-    ]);
-
-    showToast(`Check-In recorded at ${timeStr}. State transitioned to Checked In.`);
+    try {
+      await attendanceApi.punchClock({
+        employeeId: empId,
+        date: todayStr,
+        punchType: 'IN',
+        timestamp: now.toISOString(),
+        workMode: punchWorkMode === 'Client Site' ? 'Client_Site' : punchWorkMode === 'Remote' ? 'Remote' : 'Office',
+        shiftId: shifts[0]?.id || 'SHIFT-GEN',
+      });
+      await fetchLiveRecords();
+      showToast(`Check-In recorded at ${timeStr}. State transitioned to Checked In.`);
+    } catch (err: any) {
+      console.error('Check-in error:', err);
+      showToast(`Check-in failed: ${err?.message || 'Attendance Service error'}`, 'info');
+    }
   };
 
-  const handleCheckOut = () => {
+  const handleCheckOut = async () => {
     if (!myTodayRecord?.checkInTime || myTodayRecord.checkOutTime) return; // Prevent invalid/duplicate checkout
 
+    const empId = currentUser?.employeeId || 'EMP-001';
     const now = new Date();
     const timeStr = now.toTimeString().substring(0, 5);
-    const inTime = myTodayRecord.checkInTime;
 
-    const [inH, inM] = inTime.split(':').map(Number);
-    const [outH, outM] = timeStr.split(':').map(Number);
-    let totalMinutes = outH * 60 + outM - (inH * 60 + inM);
-    if (totalMinutes < 0) totalMinutes += 24 * 60;
-    const netMins = Math.max(0, totalMinutes - 60);
-    const netHours = +(netMins / 60).toFixed(2);
-    const totalHours = +(totalMinutes / 60).toFixed(2);
-
-    const isEarly = timeStr < '18:00';
-    const overtime = netHours > 8 ? +(netHours - 8).toFixed(2) : 0;
-    const finalStatus: AttendancePunchStatus =
-      netHours >= 8 ? (myTodayRecord.isLate ? 'Late' : 'Present') : 'Half Day';
-
-    setAttendanceRecords((prev) =>
-      prev.map((r) => {
-        if (
-          r.date === todayStr &&
-          (r.employeeId === (currentUser?.employeeId || 'EMP-ME') ||
-            r.employeeName === currentUser?.name)
-        ) {
-          return {
-            ...r,
-            checkOutTime: timeStr,
-            totalHours,
-            netWorkingHours: netHours,
-            isMissingPunch: false,
-            isEarlyDeparture: isEarly,
-            overtimeHours: overtime,
-            status: finalStatus
-          };
-        }
-        return r;
-      })
-    );
-
-    showToast(`Check-Out recorded at ${timeStr}. Total Net Working Hours: ${netHours} hrs.`);
+    try {
+      await attendanceApi.punchClock({
+        employeeId: empId,
+        date: todayStr,
+        punchType: 'OUT',
+        timestamp: now.toISOString(),
+        workMode: punchWorkMode === 'Client Site' ? 'Client_Site' : punchWorkMode === 'Remote' ? 'Remote' : 'Office',
+        shiftId: shifts[0]?.id || 'SHIFT-GEN',
+      });
+      await fetchLiveRecords();
+      showToast(`Check-Out recorded at ${timeStr}.`);
+    } catch (err: any) {
+      console.error('Check-out error:', err);
+      showToast(`Check-out failed: ${err?.message || 'Attendance Service error'}`, 'info');
+    }
   };
 
   // -------------------------------------------------------------
   // ACTION B: EMPLOYEE FORGOT CHECK-IN/OUT (CORRECTION WORKFLOW)
   // -------------------------------------------------------------
-  const handleSaveCorrection = (newCorr: AttendanceCorrectionEntry) => {
-    setCorrections((prev) => [newCorr, ...prev]);
-    showToast('Correction submitted. Routed to Reporting Manager for review.');
-  };
+  const handleSaveCorrection = async (newCorr: AttendanceCorrectionEntry) => {
+    try {
+      const empId = currentUser?.employeeId || newCorr.employeeId || 'EMP-001';
+      const checkInISO = newCorr.requestedCheckIn ? `${newCorr.attendanceDate}T${newCorr.requestedCheckIn}:00.000Z` : `${newCorr.attendanceDate}T09:30:00.000Z`;
+      const checkOutISO = newCorr.requestedCheckOut ? `${newCorr.attendanceDate}T${newCorr.requestedCheckOut}:00.000Z` : `${newCorr.attendanceDate}T18:30:00.000Z`;
 
-  const handleManagerCorrectionDecision = (
-    corr: AttendanceCorrectionEntry,
-    decision: 'Approved' | 'Rejected'
-  ) => {
-    setCorrections((prev) =>
-      prev.map((c) => {
-        if (c.id !== corr.id) return c;
-        return {
-          ...c,
-          status: decision === 'Approved' ? 'Pending HR Approval' : 'Manager Rejected',
-          managerDecision: decision,
-          managerDecidedAt: new Date().toISOString(),
-          managerComments: `Reviewed by ${currentUser?.name || 'Reporting Manager'}`
-        };
-      })
-    );
-    showToast(
-      `Correction request ${
-        decision === 'Approved' ? 'approved and forwarded to HR Manager' : 'rejected'
-      }.`
-    );
-  };
-
-  const handleHRCorrectionDecision = (
-    corr: AttendanceCorrectionEntry,
-    decision: 'Approved' | 'Rejected'
-  ) => {
-    setCorrections((prev) =>
-      prev.map((c) => {
-        if (c.id !== corr.id) return c;
-        return {
-          ...c,
-          status: decision === 'Approved' ? 'HR Approved' : 'HR Rejected',
-          hrDecision: decision,
-          hrDecidedAt: new Date().toISOString(),
-          hrComments: `Final approval by ${currentUser?.name || 'HR Manager'}`
-        };
-      })
-    );
-
-    // Update attendance record ONLY after final HR approval
-    if (decision === 'Approved') {
-      const updatedRecord: DailyAttendanceRecord = {
-        id: `ATT-CORR-${Date.now().toString().slice(-4)}`,
-        employeeId: corr.employeeId,
-        employeeName: corr.employeeName,
-        date: corr.attendanceDate,
-        shiftId: 'SHIFT-GEN',
-        shiftName: 'General Day Shift (09:30 - 18:30)',
-        checkInTime: corr.requestedCheckIn,
-        checkOutTime: corr.requestedCheckOut,
-        totalHours: corr.calculatedHours,
-        netWorkingHours: corr.calculatedHours,
-        breakDurationMinutes: 60,
-        overtimeHours: corr.calculatedHours > 8 ? +(corr.calculatedHours - 8).toFixed(2) : 0,
-        isLate: false,
-        lateMinutes: 0,
-        isEarlyDeparture: false,
-        isMissingPunch: false,
-        status: corr.requestedOutcome,
-        workLocationType: 'Office',
-        source: 'Correction Regularization'
-      };
-
-      setAttendanceRecords((prev) => [
-        updatedRecord,
-        ...prev.filter(
-          (r) => !(r.date === corr.attendanceDate && r.employeeId === corr.employeeId)
-        )
-      ]);
-
-      // Reopen client verification if this attendance was tied to a client deployment
-      clientAttendanceIntegration.reopenVerificationOnCorrection(
-        updatedRecord.id,
-        corr.requestedCheckIn,
-        corr.requestedCheckOut,
-        corr.calculatedHours,
-        corr.reasonRemarks || corr.reasonCategory
-      );
+      await attendanceApi.requestRegularization({
+        employeeId: empId,
+        targetDate: newCorr.attendanceDate,
+        requestedCheckIn: checkInISO,
+        requestedCheckOut: checkOutISO,
+        reason: `${newCorr.reasonCategory}: ${newCorr.reasonRemarks}`,
+      });
+      await fetchLiveRecords();
+      showToast('Correction submitted. Routed to Reporting Manager for review.');
+    } catch (err: any) {
+      console.error('Regularization request failed:', err);
+      showToast(`Failed to submit correction: ${err?.message || 'Attendance Service error'}`, 'info');
     }
+  };
 
-    showToast(
-      `HR Final Action: Request ${
-        decision === 'Approved' ? 'approved and attendance updated' : 'rejected'
-      }.`
-    );
+  const handleManagerCorrectionDecision = async (
+    corr: AttendanceCorrectionEntry,
+    decision: 'Approved' | 'Rejected'
+  ) => {
+    try {
+      await attendanceApi.reviewRegularization(
+        corr.id,
+        decision,
+        `Reviewed by ${currentUser?.name || 'Reporting Manager'}`,
+        'manager'
+      );
+      await fetchLiveRecords();
+      showToast(
+        `Correction request ${decision === 'Approved' ? 'approved and forwarded to HR Manager' : 'rejected'}.`
+      );
+    } catch (err: any) {
+      console.error('Manager review error:', err);
+      showToast(`Review failed: ${err?.message || 'Service error'}`, 'info');
+    }
+  };
+
+  const handleHRCorrectionDecision = async (
+    corr: AttendanceCorrectionEntry,
+    decision: 'Approved' | 'Rejected'
+  ) => {
+    try {
+      await attendanceApi.reviewRegularization(
+        corr.id,
+        decision,
+        `Final approval by ${currentUser?.name || 'HR Manager'}`,
+        'hr'
+      );
+      await fetchLiveRecords();
+      showToast(
+        `HR Final Action: Request ${decision === 'Approved' ? 'approved and attendance updated in PostgreSQL' : 'rejected'}.`
+      );
+    } catch (err: any) {
+      console.error('HR review error:', err);
+      showToast(`Review failed: ${err?.message || 'Service error'}`, 'info');
+    }
   };
 
   // -------------------------------------------------------------
   // ACTION C: HR OUTAGE / MANUAL ATTENDANCE ENTRY
   // -------------------------------------------------------------
-  const handleSaveHRManualEntry = (
+  const handleSaveHRManualEntry = async (
     record: DailyAttendanceRecord,
     details: {
       outageType: string;
@@ -480,6 +470,27 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
       remarks: string;
     }
   ) => {
+    try {
+      const checkInISO = `${record.date}T${record.checkInTime || '09:30'}:00.000Z`;
+      const checkOutISO = `${record.date}T${record.checkOutTime || '18:30'}:00.000Z`;
+      const backendStatus = record.status === 'Half Day' ? 'Half_Day' : (record.status as any);
+
+      await attendanceApi.createManualEntry({
+        employeeId: record.employeeId,
+        date: record.date,
+        checkInTime: checkInISO,
+        checkOutTime: checkOutISO,
+        shiftId: record.shiftId || 'SHIFT-GEN',
+        workMode: record.workLocationType === 'Client Site' ? 'Client_Site' : record.workLocationType === 'Remote' ? 'Remote' : 'Office',
+        status: backendStatus,
+        notes: `[${details.outageType}] Ref: ${details.incidentRef || 'N/A'}. Remarks: ${details.remarks || ''}`,
+      });
+      showToast('Manual attendance entry saved successfully to Attendance Service.');
+    } catch (err: any) {
+      console.warn('Backend manual entry sync error:', err);
+      showToast(`Saved locally: ${err?.message || 'Attendance Service unavailable'}`, 'info');
+    }
+
     setAttendanceRecords((prev) => [
       record,
       ...prev.filter(
@@ -564,38 +575,74 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
   // -------------------------------------------------------------
   // SHIFT MANAGEMENT
   // -------------------------------------------------------------
-  const handleSaveShift = (e: React.FormEvent) => {
+  const handleSaveShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!shiftForm.name.trim() || !shiftForm.code.trim()) return;
 
-    const newShift: ShiftDefinitionRecord = {
-      id: `SHIFT-${Date.now().toString().slice(-4)}`,
-      ...shiftForm
-    };
-    setShifts((prev) => [...prev, newShift]);
-    showToast(`Shift "${shiftForm.name}" configured.`);
+    try {
+      const created = await attendanceApi.createShift({
+        code: shiftForm.code.toUpperCase(),
+        name: shiftForm.name,
+        startTime: shiftForm.startTime,
+        endTime: shiftForm.endTime,
+        gracePeriodMins: shiftForm.gracePeriodMinutes,
+        halfDayThreshold: 4.5,
+        fullDayThreshold: shiftForm.totalWorkingHours,
+        isOvernight: shiftForm.isOvernight,
+        weeklyOffDays: shiftForm.weeklyOffDays,
+      });
+
+      setShifts((prev) => [
+        ...prev,
+        {
+          id: created.id,
+          name: created.name,
+          code: created.code,
+          startTime: created.startTime,
+          endTime: created.endTime,
+          gracePeriodMinutes: created.gracePeriodMinutes,
+          lateArrivalThresholdMinutes: 15,
+          earlyDepartureThresholdMinutes: 15,
+          breakDurationMinutes: created.breakDurationMinutes,
+          totalWorkingHours: created.totalWorkingHours,
+          workdaysCount: 6,
+          isOvernight: created.isOvernight,
+          weeklyOffDays: created.weeklyOffDays,
+          isActive: created.isActive ?? true,
+        },
+      ]);
+      showToast(`Shift "${shiftForm.name}" created and synced with backend.`);
+    } catch (err: any) {
+      console.warn('Backend shift creation error, saving locally:', err);
+      const newShift: ShiftDefinitionRecord = {
+        id: `SHIFT-${Date.now().toString().slice(-4)}`,
+        ...shiftForm,
+      };
+      setShifts((prev) => [...prev, newShift]);
+      showToast(`Shift "${shiftForm.name}" configured.`);
+    }
+
     setIsShiftModalOpen(false);
   };
 
-  const handleSaveSchedule = (e: React.FormEvent) => {
+  const handleSaveSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!scheduleForm.employeeName.trim()) return;
+    if (!scheduleForm.employeeName.trim() || !scheduleForm.employeeId.trim()) return;
 
-    const matchedShift = shifts.find((s) => s.id === scheduleForm.shiftId);
-    const newEntry: ShiftScheduleEntry = {
-      id: `SCH-${Date.now().toString().slice(-4)}`,
-      employeeId: scheduleForm.employeeId || `EMP-${Date.now().toString().slice(-3)}`,
-      employeeName: scheduleForm.employeeName,
-      shiftId: scheduleForm.shiftId,
-      shiftName: matchedShift?.name || 'Standard Shift',
-      startDate: scheduleForm.startDate,
-      endDate: scheduleForm.endDate,
-      assignedBy: currentUser?.name || 'HR Admin',
-      assignedAt: new Date().toISOString()
-    };
+    try {
+      await attendanceApi.createShiftSchedule({
+        employeeId: scheduleForm.employeeId,
+        shiftId: scheduleForm.shiftId,
+        effectiveFrom: scheduleForm.startDate,
+        effectiveTo: scheduleForm.endDate,
+      });
+      await fetchLiveRecords();
+      showToast(`Shift roster scheduled in database for "${scheduleForm.employeeName}".`);
+    } catch (err: any) {
+      console.error('Failed to create shift schedule:', err);
+      showToast(`Failed to schedule shift: ${err?.message || 'Attendance Service error'}`, 'info');
+    }
 
-    setSchedules((prev) => [newEntry, ...prev]);
-    showToast(`Shift roster scheduled for "${scheduleForm.employeeName}".`);
     setIsScheduleModalOpen(false);
   };
 
@@ -628,6 +675,24 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-5">
+      {/* Live Service Offline / Error Banner */}
+      {liveAttendanceError && (
+        <div className="p-3.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 flex items-center justify-between text-xs shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="text-amber-600 shrink-0" />
+            <span className="font-medium">
+              <strong>Attendance Service Notice:</strong> {liveAttendanceError} (Displaying offline/cached view).
+            </span>
+          </div>
+          <button
+            onClick={() => setLiveAttendanceError(null)}
+            className="text-amber-700 hover:text-amber-900 font-semibold"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div className="p-3.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-between text-xs shadow-md">
@@ -716,11 +781,10 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
           <div className="flex border-b border-slate-200 bg-white px-3 rounded-xl shadow-xs">
             <button
               onClick={() => setActiveEmpTab('history')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${
-                activeEmpTab === 'history'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${activeEmpTab === 'history'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
+                }`}
             >
               My Attendance History (
               {
@@ -734,11 +798,10 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
             </button>
             <button
               onClick={() => setActiveEmpTab('corrections')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${
-                activeEmpTab === 'corrections'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${activeEmpTab === 'corrections'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
+                }`}
             >
               My Correction Requests (
               {
@@ -752,11 +815,10 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
             </button>
             <button
               onClick={() => setActiveEmpTab('overtime')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${
-                activeEmpTab === 'overtime'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-colors ${activeEmpTab === 'overtime'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
+                }`}
             >
               My Overtime (
               {
@@ -876,13 +938,12 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                             </td>
                             <td className="p-3">
                               <span
-                                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                  c.status === 'HR Approved'
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${c.status === 'HR Approved'
                                     ? 'bg-emerald-100 text-emerald-800'
                                     : c.status.includes('Rejected')
-                                    ? 'bg-rose-100 text-rose-800'
-                                    : 'bg-amber-100 text-amber-800'
-                                }`}
+                                      ? 'bg-rose-100 text-rose-800'
+                                      : 'bg-amber-100 text-amber-800'
+                                  }`}
                               >
                                 {c.status}
                               </span>
@@ -949,11 +1010,10 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                             <td className="p-3">{o.overtimeReason}</td>
                             <td className="p-3">
                               <span
-                                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                  o.status === 'Ready for Future Payroll Integration'
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${o.status === 'Ready for Future Payroll Integration'
                                     ? 'bg-emerald-100 text-emerald-800'
                                     : 'bg-amber-100 text-amber-800'
-                                }`}
+                                  }`}
                               >
                                 {o.status}
                               </span>
@@ -980,72 +1040,65 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
           <div className="flex border-b border-slate-200 bg-white px-2 rounded-xl shadow-xs overflow-x-auto">
             <button
               onClick={() => setActiveHRTab('dashboard')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
-                activeHRTab === 'dashboard'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${activeHRTab === 'dashboard'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
+                }`}
             >
               Workforce Dashboard
             </button>
             <button
               onClick={() => setActiveHRTab('timesheets')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
-                activeHRTab === 'timesheets'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${activeHRTab === 'timesheets'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
+                }`}
             >
               Timesheet Records ({attendanceRecords.length})
             </button>
             <button
               onClick={() => setActiveHRTab('shifts')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
-                activeHRTab === 'shifts'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${activeHRTab === 'shifts'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
+                }`}
             >
               Shift Configuration ({shifts.length})
             </button>
             <button
               onClick={() => setActiveHRTab('scheduling')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
-                activeHRTab === 'scheduling'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${activeHRTab === 'scheduling'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
+                }`}
             >
               Shift Scheduling ({schedules.length})
             </button>
             <button
               onClick={() => setActiveHRTab('overtime')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
-                activeHRTab === 'overtime'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${activeHRTab === 'overtime'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
+                }`}
             >
               Overtime Management ({overtimeEntries.length})
             </button>
             <button
               onClick={() => setActiveHRTab('corrections')}
-              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
-                activeHRTab === 'corrections'
+              className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${activeHRTab === 'corrections'
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
+                }`}
             >
               Attendance Corrections ({corrections.length})
             </button>
             {isHR && (
               <button
                 onClick={() => setActiveHRTab('manual-entries')}
-                className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
-                  activeHRTab === 'manual-entries'
+                className={`py-3.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${activeHRTab === 'manual-entries'
                     ? 'border-indigo-600 text-indigo-600'
                     : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
+                  }`}
               >
                 HR Manual Entries ({hrManualAuditLogs.length})
               </button>
@@ -1133,13 +1186,12 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                           </td>
                           <td className="p-3.5">
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                r.source === 'Manual HR Entry'
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold ${r.source === 'Manual HR Entry'
                                   ? 'bg-purple-100 text-purple-800'
                                   : r.source === 'Correction Regularization'
-                                  ? 'bg-indigo-100 text-indigo-800'
-                                  : 'bg-slate-100 text-slate-700'
-                              }`}
+                                    ? 'bg-indigo-100 text-indigo-800'
+                                    : 'bg-slate-100 text-slate-700'
+                                }`}
                             >
                               {r.source}
                             </span>
@@ -1266,13 +1318,12 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                           <td className="p-3.5">{ot.overtimeReason}</td>
                           <td className="p-3.5">
                             <span
-                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                ot.status === 'Ready for Future Payroll Integration'
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${ot.status === 'Ready for Future Payroll Integration'
                                   ? 'bg-emerald-100 text-emerald-800'
                                   : ot.status === 'Manager Approved'
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : 'bg-amber-100 text-amber-800'
-                              }`}
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
                             >
                               {ot.status}
                             </span>
@@ -1353,15 +1404,14 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                           </td>
                           <td className="p-3.5">
                             <span
-                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                c.status === 'HR Approved'
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${c.status === 'HR Approved'
                                   ? 'bg-emerald-100 text-emerald-800'
                                   : c.status === 'Pending HR Approval'
-                                  ? 'bg-purple-100 text-purple-800'
-                                  : c.status.includes('Rejected')
-                                  ? 'bg-rose-100 text-rose-800'
-                                  : 'bg-amber-100 text-amber-800'
-                              }`}
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : c.status.includes('Rejected')
+                                      ? 'bg-rose-100 text-rose-800'
+                                      : 'bg-amber-100 text-amber-800'
+                                }`}
                             >
                               {c.status}
                             </span>
@@ -1491,15 +1541,39 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
 
             <form onSubmit={handleSaveSchedule} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">Employee Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={scheduleForm.employeeName}
-                  onChange={(e) => setScheduleForm({ ...scheduleForm, employeeName: e.target.value })}
-                  placeholder="e.g. Archana"
-                  className="w-full px-3 py-2 border rounded-lg text-xs"
-                />
+                <label className="block text-slate-700 font-semibold mb-1">Employee *</label>
+                {allEmployees.length > 0 ? (
+                  <select
+                    required
+                    value={scheduleForm.employeeId}
+                    onChange={(e) => {
+                      const empId = e.target.value;
+                      const emp = allEmployees.find((x) => x.id === empId);
+                      setScheduleForm({
+                        ...scheduleForm,
+                        employeeId: empId,
+                        employeeName: emp?.name || '',
+                      });
+                    }}
+                    className="w-full px-3 py-2 border rounded-lg text-xs bg-white"
+                  >
+                    <option value="">Select Employee</option>
+                    {allEmployees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.name} ({emp.id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    value={scheduleForm.employeeName}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, employeeName: e.target.value, employeeId: e.target.value })}
+                    placeholder="e.g. EMP-001"
+                    className="w-full px-3 py-2 border rounded-lg text-xs"
+                  />
+                )}
               </div>
 
               <div>

@@ -1,9 +1,12 @@
-// Orbyx HRMS New Employee Modal - 4-stage registration
-import React, { useState } from 'react';
+// Celestial HRMS New Employee Modal - 4-stage registration
+import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { PhotoCaptureField } from '../common/PhotoCaptureField';
 import { db } from '../../db/storage';
 import { hrmsService } from '../../services/hrmsService';
+import { employeeApi } from '../../services/employeeApi';
+import { orgApi } from '../../services/orgApi';
+import { attendanceApi } from '../../services/attendanceApi';
 import { useAuth } from '../../services/authContext';
 import { Employee, EmploymentType, DocumentCategory } from '../../types/hrms';
 import { calculateProfileCompleteness } from '../../utils/profileUtils';
@@ -39,12 +42,68 @@ interface StagedDoc {
 export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onClose, onCreated }) => {
   const { currentUser } = useAuth();
 
-  const departments = db.getDepartments();
-  const designations = db.getDesignations();
-  const branches = db.getBranches();
-  const shifts = db.getShifts();
-  const allEmployees = db.getEmployees();
+  // Master data state loaded from authoritative backend APIs
+  const [departments, setDepartments] = useState<Array<{ id: string; name: string; code?: string }>>([]);
+  const [designations, setDesignations] = useState<Array<{ id: string; title: string; level?: string }>>([]);
+  const [branches, setBranches] = useState<Array<{ id: string; name: string; city: string }>>([]);
+  const [shifts, setShifts] = useState<Array<{ id: string; name: string; startTime: string; endTime: string }>>([]);
+  const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
   const structures = db.getSalaryStructures();
+
+  // Load master data from orgApi, attendanceApi, and employeeApi when modal is opened
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    async function fetchMasterData() {
+      try {
+        const [depts, desigs, brs, shfts, empRes] = await Promise.all([
+          orgApi.getDepartments().catch(() => []),
+          orgApi.getDesignations().catch(() => []),
+          orgApi.getBranches().catch(() => []),
+          attendanceApi.listShifts().catch(() => []),
+          employeeApi.list({ limit: 100 }).catch(() => ({ employees: [] })),
+        ]);
+        if (isMounted) {
+          if (Array.isArray(depts)) {
+            setDepartments(depts.map((d) => ({ id: d.code || d.id, name: d.name, code: d.code })));
+            if (depts.length > 0 && !departmentId) {
+              setDepartmentId(depts[0].code || depts[0].id);
+            }
+          }
+          if (Array.isArray(desigs)) {
+            setDesignations(desigs.map((ds) => ({ id: ds.code || ds.id, title: ds.title, level: String(ds.level || 1) })));
+            if (desigs.length > 0 && !designationId) {
+              setDesignationId(desigs[0].code || desigs[0].id);
+            }
+          }
+          if (Array.isArray(brs)) {
+            setBranches(brs.map((b) => ({ id: b.code || b.id, name: b.name, city: b.city })));
+            if (brs.length > 0 && !branchId) {
+              setBranchId(brs[0].code || brs[0].id);
+            }
+          }
+          if (Array.isArray(shfts)) {
+            setShifts(shfts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })));
+            if (shfts.length > 0 && !shiftId) {
+              setShiftId(shfts[0].id);
+            }
+          }
+          if (empRes && Array.isArray(empRes.employees)) {
+            setAllEmployees(empRes.employees);
+            if (empRes.employees.length > 0 && !reportingManagerId) {
+              setReportingManagerId(empRes.employees[0].id);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load live master data in NewEmployeeModal:', err);
+      }
+    }
+    fetchMasterData();
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
 
   const [activeTab, setActiveTab] = useState<'personal' | 'employment' | 'salary' | 'statutory' | 'documents'>('personal');
 
@@ -64,6 +123,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   const [permanentAddress, setPermanentAddress] = useState('');
   const [currentAddress, setCurrentAddress] = useState('');
   const [sameAsPermanent, setSameAsPermanent] = useState(true);
+  const [enableLoginAccess, setEnableLoginAccess] = useState(true);
 
   // Emergency contact
   const [emName, setEmName] = useState('');
@@ -73,11 +133,11 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   // -------------------------------------------------------------
   // Section 2: Employment & Organization Details
   // -------------------------------------------------------------
-  const [departmentId, setDepartmentId] = useState(departments[0]?.id || 'DEP-ENG');
-  const [designationId, setDesignationId] = useState(designations[0]?.id || 'DES-SWE');
-  const [branchId, setBranchId] = useState(branches[0]?.id || 'BR-BLR');
-  const [shiftId, setShiftId] = useState(shifts[0]?.id || 'SHIFT-GEN');
-  const [reportingManagerId, setReportingManagerId] = useState(allEmployees[1]?.id || 'EMP-SDM-0003');
+  const [departmentId, setDepartmentId] = useState('');
+  const [designationId, setDesignationId] = useState('');
+  const [branchId, setBranchId] = useState('');
+  const [shiftId, setShiftId] = useState('');
+  const [reportingManagerId, setReportingManagerId] = useState('');
   const [employmentType, setEmploymentType] = useState<EmploymentType>('Permanent');
   const [employeeCategory, setEmployeeCategory] = useState('Core Engineering Staff');
   const [employmentStatus, setEmploymentStatus] = useState<'Active' | 'Probation' | 'Notice Period'>('Active');
@@ -238,7 +298,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
     setStagedDocs(stagedDocs.filter((d) => d.id !== id));
   };
 
-  const handleSave = (isDraft: boolean) => {
+  const handleSave = async (isDraft: boolean) => {
     setError(null);
 
     if (!isDraft) {
@@ -296,6 +356,8 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
           employmentType,
           status: employmentStatus,
           profileStatus: isDraft ? 'Draft' : completeness.percentage >= 85 ? 'Active' : 'Profile Incomplete',
+          accountStatus: enableLoginAccess ? 'PENDING_ACTIVATION' : 'DISABLED',
+          invitationStatus: enableLoginAccess ? 'PENDING_INVITE' : 'NOT_REQUIRED',
           employeeCategory,
           dateOfJoining,
           confirmationDate: confirmationDate || undefined,
@@ -323,6 +385,59 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
         currentUser.id,
         currentUser.name
       );
+
+      // Connect to Employee Service backend enrollment API
+      try {
+        if (isDraft) {
+          await employeeApi.createDraft({
+            firstName: created.firstName,
+            lastName: created.lastName,
+            email: created.officialEmail || created.email,
+            phone: created.phone,
+            userId: created.userId,
+            departmentId: created.departmentId,
+            designationId: created.designationId,
+            branchId: created.branchId,
+            employmentType: created.employmentType,
+          });
+        } else {
+          await employeeApi.enroll({
+            id: created.id,
+            userId: created.userId,
+            firstName: created.firstName,
+            lastName: created.lastName,
+            email: created.officialEmail || created.email,
+            phone: created.phone,
+            dateOfBirth: created.dateOfBirth,
+            gender: created.gender as any,
+            address: created.address,
+            emergencyContact: {
+              name: created.emergencyContact?.name || 'Primary Contact',
+              relationship: created.emergencyContact?.relationship || 'Family',
+              phone: created.emergencyContact?.phone || created.phone,
+            },
+            departmentId: created.departmentId,
+            designationId: created.designationId,
+            branchId: created.branchId,
+            employmentType: created.employmentType,
+            dateOfJoining: created.dateOfJoining,
+            noticePeriodDays: created.noticePeriodDays,
+            shiftId: created.shiftId,
+            bankDetails: {
+              accountNumber: created.bankDetails.accountNumber,
+              ifscCode: created.bankDetails.ifscOrRouting,
+              bankName: created.bankDetails.bankName,
+            },
+            panOrTaxNumber: created.panOrTaxNumber,
+            pfUan: created.pfUan,
+            esiNumber: created.esiNumber,
+            baseSalaryAnnual: created.baseSalaryAnnual,
+            salaryStructureId: created.salaryStructureId,
+          });
+        }
+      } catch (backendErr: any) {
+        console.warn('Backend enrollment sync skipped/deferred, persisted to local state:', backendErr);
+      }
 
       // Create initial Date of Joining Service Record
       db.saveServiceRecord({
@@ -354,7 +469,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
           status: 'Pending' as const,
           uploadedBy: currentUser.name
         }));
-        localStorage.setItem(`orbyx_extra_docs_${created.id}`, JSON.stringify(vaultDocs));
+        localStorage.setItem(`celestial_extra_docs_${created.id}`, JSON.stringify(vaultDocs));
       }
 
       onCreated(created);
@@ -545,6 +660,25 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
               </div>
             </div>
 
+            {/* HRMS Login Access Provisioning Control */}
+            <div className="p-3 bg-indigo-50/70 rounded-xl border border-indigo-100 flex items-start gap-3">
+              <input
+                type="checkbox"
+                id="enableLoginAccess"
+                checked={enableLoginAccess}
+                onChange={(e) => setEnableLoginAccess(e.target.checked)}
+                className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 mt-0.5 cursor-pointer"
+              />
+              <div className="space-y-0.5">
+                <label htmlFor="enableLoginAccess" className="font-semibold text-indigo-950 text-xs cursor-pointer">
+                  Enable HRMS Login Access
+                </label>
+                <p className="text-[11px] text-indigo-700 leading-relaxed">
+                  Automatically provision an HRMS user account and send an account activation email with a single-use setup link.
+                </p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
@@ -698,9 +832,10 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setDepartmentId(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Department</option>
                   {departments.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name} ({d.code})
+                      {d.name} {d.code ? `(${d.code})` : ''}
                     </option>
                   ))}
                 </select>
@@ -713,9 +848,10 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setDesignationId(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Designation</option>
                   {designations.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.title} [{d.level}]
+                      {d.title} {d.level ? `[${d.level}]` : ''}
                     </option>
                   ))}
                 </select>
@@ -728,6 +864,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setReportingManagerId(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Manager</option>
                   {allEmployees.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.firstName} {m.lastName} ({m.id})
@@ -745,6 +882,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setBranchId(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Branch</option>
                   {branches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name} ({b.city})
@@ -774,6 +912,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setShiftId(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Shift</option>
                   {shifts.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name} ({s.startTime} - {s.endTime})

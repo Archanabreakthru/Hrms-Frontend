@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   CalendarDays,
@@ -17,7 +17,8 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { useAuth } from '../../services/authContext';
-import { db, subscribeToDB } from '../../db/storage';
+import { attendanceApi } from '../../services/attendanceApi';
+import { expenseApi } from '../../services/expenseApi';
 
 export type NavTab = 
   | 'dashboard'
@@ -41,26 +42,60 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
-  const [collapsed, setCollapsed] = React.useState(false);
-  const [, setDbTick] = React.useState(0);
+  const [collapsed, setCollapsed] = useState(false);
   const { currentUser, canAccessModule } = useAuth();
 
-  React.useEffect(() => {
-    return subscribeToDB(() => setDbTick((t) => t + 1));
-  }, []);
+  const [pendingLeaves, setPendingLeaves] = useState<number>(0);
+  const [pendingCorrections, setPendingCorrections] = useState<number>(0);
+  const [pendingExpenses, setPendingExpenses] = useState<number>(0);
 
-  // Role-scoped pending counts for badges
-  const pendingLeaves = currentUser.role === 'hr_admin'
-    ? db.getLeaveApplications().filter((a) => a.status === 'Pending Approval').length
-    : db.getLeaveApplications().filter((a) => a.approverId === currentUser.employeeId && a.status === 'Pending Approval').length;
+  // Fetch genuine pending counts from authoritative backend microservices
+  useEffect(() => {
+    let isMounted = true;
 
-  const pendingExpenses = currentUser.role === 'hr_admin'
-    ? db.getExpenseClaims().filter((c) => c.status === 'Pending Manager Approval' || c.status === 'Pending Reimbursement').length
-    : db.getExpenseClaims().filter((c) => c.approverId === currentUser.employeeId && c.status === 'Pending Manager Approval').length;
+    async function loadPendingCounts() {
+      // Fetch pending leaves
+      try {
+        const leaves = await attendanceApi.listLeaveApplications({ status: 'Pending' });
+        if (isMounted && Array.isArray(leaves)) {
+          const count = currentUser.role === 'hr_admin'
+            ? leaves.filter((a) => a.status === 'Pending Approval').length
+            : leaves.filter((a) => a.approverId === currentUser.employeeId && a.status === 'Pending Approval').length;
+          setPendingLeaves(count);
+        }
+      } catch {
+        if (isMounted) setPendingLeaves(0);
+      }
 
-  const pendingCorrections = currentUser.role === 'hr_admin'
-    ? db.getCorrectionRequests().filter((r) => r.status === 'Pending').length
-    : db.getCorrectionRequests().filter((r) => r.approverId === currentUser.employeeId && r.status === 'Pending').length;
+      // Fetch pending attendance regularizations
+      try {
+        const regularizations = await attendanceApi.listRegularizations({ status: 'Pending' });
+        if (isMounted && Array.isArray(regularizations)) {
+          setPendingCorrections(regularizations.length);
+        }
+      } catch {
+        if (isMounted) setPendingCorrections(0);
+      }
+
+      // Fetch pending expense claims
+      try {
+        const claims = await expenseApi.getClaims({ status: 'Pending Manager Approval' });
+        if (isMounted && Array.isArray(claims)) {
+          setPendingExpenses(claims.length);
+        }
+      } catch {
+        if (isMounted) setPendingExpenses(0);
+      }
+    }
+
+    if (currentUser?.id) {
+      loadPendingCounts();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.id, currentUser?.employeeId, currentUser?.role]);
 
   const navItems: { id: NavTab; label: string; icon: React.ElementType; badge?: number; access: boolean }[] = [
     {
@@ -154,12 +189,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       {/* Brand Header */}
       <div className={`h-16 flex items-center ${collapsed ? 'justify-center px-2' : 'px-6'} border-b border-slate-800 gap-3`}>
         <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-sm shrink-0">
-          O
+          C
         </div>
         {!collapsed && (
           <div>
             <div className="text-base font-semibold text-white tracking-tight flex items-center gap-1.5">
-              <span>Orbyx</span>
+              <span>Celestial</span>
               <span className="text-[10px] font-mono uppercase bg-slate-800 text-indigo-400 px-1.5 py-0.5 rounded">HRMS</span>
             </div>
             <p className="text-[11px] text-slate-400">Human Resources</p>
@@ -178,11 +213,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
               <span>Active Role:</span>
             </span>
             <span className="font-medium capitalize text-slate-200">
-              {currentUser.role === 'hr_admin'
+              {String(currentUser?.role || '').toLowerCase() === 'super_admin'
+                ? 'Super Administrator'
+                : String(currentUser?.role || '').toLowerCase() === 'admin'
+                ? 'Administrator'
+                : String(currentUser?.role || '').toLowerCase() === 'hr_admin'
                 ? 'HR'
-                : currentUser.role === 'senior_manager'
+                : String(currentUser?.role || '').toLowerCase() === 'senior_manager'
                 ? 'Senior Management'
-                : currentUser.role === 'reporting_manager'
+                : String(currentUser?.role || '').toLowerCase() === 'reporting_manager'
                 ? 'Reporting Manager'
                 : 'Employee'}
             </span>

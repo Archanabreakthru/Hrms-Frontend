@@ -15,6 +15,7 @@ import {
 import { db } from '../../db/storage';
 import { useAuth } from '../../services/authContext';
 import { permissionService } from '../../services/permissionService';
+import { employeeApi } from '../../services/employeeApi';
 import {
   User,
   Briefcase,
@@ -97,9 +98,9 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   const [showAddPolicyModal, setShowAddPolicyModal] = useState(false);
   const [policyType, setPolicyType] = useState<InsurancePolicyCategory>('Group Medical Insurance');
   const [policyProvider, setPolicyProvider] = useState('Star Health & Allied Insurance');
-  const [policyName, setPolicyName] = useState('Orbyx Corporate Group Health Shield');
+  const [policyName, setPolicyName] = useState('Celestial Corporate Group Health Shield');
   const [policyNumber, setPolicyNumber] = useState('SH-CORP-2026-9921');
-  const [groupPolicyNumber, setGroupPolicyNumber] = useState('GRP-ORBYX-01');
+  const [groupPolicyNumber, setGroupPolicyNumber] = useState('GRP-Celestial-01');
   const [membershipNumber, setMembershipNumber] = useState('');
   const [policyStartDate, setPolicyStartDate] = useState('2026-04-01');
   const [policyEndDate, setPolicyEndDate] = useState('2027-03-31');
@@ -380,40 +381,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     fileSize?: string;
   };
 
-  const docStorageKey = `orbyx_extra_docs_${full.id}`;
-  const defaultDocs: VaultDoc[] = [
-    {
-      id: `DOC-${full.id}-1`,
-      title: 'Employment Contract & Signed Offer.pdf',
-      category: 'Offer Letter',
-      uploadedAt: full.dateOfJoining,
-      issueDate: full.dateOfJoining,
-      expiryDate: '',
-      status: 'Verified',
-      uploadedBy: 'Raseedh (HR Admin)'
-    },
-    {
-      id: `DOC-${full.id}-2`,
-      title: 'Government Tax ID & PAN Card.pdf',
-      category: 'ID Proof',
-      uploadedAt: full.dateOfJoining,
-      issueDate: '2021-04-01',
-      expiryDate: '',
-      status: 'Verified',
-      uploadedBy: `${full.firstName} ${full.lastName}`
-    },
-    {
-      id: `DOC-${full.id}-3`,
-      title: 'B.Tech / Postgraduate Degree Certificate.pdf',
-      category: 'Education Certificate',
-      uploadedAt: full.dateOfJoining,
-      issueDate: '2019-06-15',
-      expiryDate: '',
-      status: 'Verified',
-      uploadedBy: `${full.firstName} ${full.lastName}`
-    }
-  ];
-
+  const docStorageKey = `celestial_extra_docs_${full.id}`;
   const getEmployeeDocs = (): VaultDoc[] => {
     try {
       const raw = localStorage.getItem(docStorageKey);
@@ -421,7 +389,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     } catch {
       // ignore
     }
-    return defaultDocs;
+    return [];
   };
 
   const saveEmployeeDocs = (nextDocs: VaultDoc[]) => {
@@ -432,7 +400,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   const employeeDocs = getEmployeeDocs();
   const filteredDocs = employeeDocs.filter((d) => docCategoryFilter === 'All' || d.category === docCategoryFilter);
 
-  const handleMockDocUpload = (e: React.FormEvent) => {
+  const handleDocUpload = (e: React.FormEvent) => {
     e.preventDefault();
     setDocUploadError(null);
     if (!docUploadTitle.trim() && !docUploadFile) {
@@ -583,12 +551,30 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     setActiveTab(newTab);
   };
 
-  const savePersonalSection = (e: React.FormEvent) => {
+  const savePersonalSection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pFirstName.trim() || !pLastName.trim()) {
       setSectionSaveError('First Name and Last Name are required.');
       return;
     }
+    try {
+      await employeeApi.updatePersonal(full.id, {
+        personalEmail: pPersonalEmail.trim(),
+        personalPhone: pPersonalPhone.trim(),
+        permanentAddress: pPermanentAddress.trim(),
+        currentAddress: pCurrentAddress.trim(),
+        bloodGroup: pBloodGroup,
+        maritalStatus: pMaritalStatus,
+        emergencyContact: {
+          name: pEmergName.trim(),
+          relationship: pEmergRel.trim(),
+          phone: pEmergPhone.trim()
+        }
+      });
+    } catch (err: any) {
+      console.warn('Backend updatePersonal failed, syncing locally:', err);
+    }
+
     const result = permissionService.updateEmployeeSection(
       full.id,
       'personal',
@@ -624,12 +610,28 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     }
   };
 
-  const saveEmploymentSection = (e: React.FormEvent) => {
+  const saveEmploymentSection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!eDepartmentId || !eDesignationId || !eBranchId) {
       setSectionSaveError('Department, Designation, and Branch Location are required.');
       return;
     }
+    try {
+      await employeeApi.updateEmployment(full.id, {
+        departmentId: eDepartmentId,
+        designationId: eDesignationId,
+        branchId: eBranchId,
+        employmentType: eEmploymentType,
+        status: eStatus,
+        confirmationDate: eConfirmationDate,
+        noticePeriodDays: Number(eNoticePeriodDays),
+        probationPeriodDays: Number(eProbationPeriodDays),
+        shiftId: eShiftId
+      });
+    } catch (err: any) {
+      console.warn('Backend updateEmployment failed, syncing locally:', err);
+    }
+
     const result = permissionService.updateEmployeeSection(
       full.id,
       'employment',
@@ -660,8 +662,16 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     }
   };
 
-  const saveReportingSection = (e: React.FormEvent) => {
+  const saveReportingSection = async (e: React.FormEvent) => {
     e.preventDefault();
+    try {
+      if (oReportingManagerId) {
+        await employeeApi.updateReporting(full.id, oReportingManagerId);
+      }
+    } catch (err: any) {
+      console.warn('Backend updateReporting failed, syncing locally:', err);
+    }
+
     const result = permissionService.updateEmployeeSection(
       full.id,
       'reporting',
@@ -682,7 +692,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
     }
   };
 
-  const saveSalarySection = (e: React.FormEvent) => {
+  const saveSalarySection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sBaseSalaryAnnual || Number(sBaseSalaryAnnual) <= 0) {
       setSectionSaveError('Please enter a valid Annual CTC.');
@@ -692,6 +702,24 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
       setSectionSaveError('Bank Account Number, IFSC Code, and PAN Number are mandatory.');
       return;
     }
+    try {
+      await employeeApi.updateSalaryBank(full.id, {
+        baseSalaryAnnual: Number(sBaseSalaryAnnual),
+        salaryStructureId: sSalaryStructureId,
+        panOrTaxNumber: sPan.trim().toUpperCase(),
+        pfUan: sUan.trim(),
+        epfApplicable: sEpfApplicable,
+        esiApplicable: sEsiApplicable,
+        bankDetails: {
+          bankName: sBankName.trim(),
+          accountNumber: sAccountNumber.trim(),
+          ifscCode: sIfsc.trim().toUpperCase(),
+        }
+      });
+    } catch (err: any) {
+      console.warn('Backend updateSalaryBank failed, syncing locally:', err);
+    }
+
     const result = permissionService.updateEmployeeSection(
       full.id,
       'salary',
@@ -828,8 +856,15 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       if (!editFirstName.trim()) return;
+                      try {
+                        await employeeApi.updatePersonal(full.id, {
+                          // Note: firstName/lastName preserved in personal details update
+                        });
+                      } catch (err: any) {
+                        console.warn('Backend updatePersonal failed, syncing locally:', err);
+                      }
                       const rawEmp = db.getEmployeeById(full.id);
                       if (rawEmp) {
                         const updatedEmp: Employee = {
@@ -853,7 +888,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                         setDocRefresh((n) => n + 1);
                       }
                     }}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
                   >
                     Save Name
                   </button>
@@ -1667,7 +1702,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
 
               {/* Upload Document Form */}
               {canManageDocs && (
-                <form onSubmit={handleMockDocUpload} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
+                <form onSubmit={handleDocUpload} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
                   <p className="font-medium text-slate-800 text-xs">Upload Certificate / Employee Document to Vault</p>
                   
                   {docUploadError && (

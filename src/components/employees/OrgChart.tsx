@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { db, subscribeToDB } from '../../db/storage';
 import { Avatar } from '../common/Avatar';
 import { Employee, CompanyProfile } from '../../types/hrms';
 import { useAuth } from '../../services/authContext';
 import { hrmsService } from '../../services/hrmsService';
+import { employeeApi } from '../../services/employeeApi';
+import { orgApi } from '../../services/orgApi';
 import {
   Users,
   ChevronRight,
@@ -22,20 +23,63 @@ interface OrgChartProps {
 
 export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
   const { currentUser } = useAuth();
-  const isHR = currentUser.role === 'hr_admin';
+  const isHR = currentUser.role === 'super_admin' || currentUser.role === 'admin' || currentUser.role === 'hr_admin';
   const isMD = currentUser.role === 'senior_manager';
   const canConfigureGovernance = isHR || isMD;
 
-  const [employees, setEmployees] = useState<Employee[]>(() => db.getEmployees());
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => db.getCompanyProfile());
-  const departments = db.getDepartments();
-  const designations = db.getDesignations();
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // Live master data states fetched from Organization Service API
+  const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([]);
+  const [designations, setDesignations] = useState<Array<{ id: string; title: string }>>([]);
+
+  const loadLiveEmployees = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await employeeApi.list({ limit: 100 });
+      if (res && res.employees) {
+        setEmployees(res.employees);
+        setFetchError(null);
+      }
+    } catch (err: any) {
+      console.warn('OrgChart failed to load live employees:', err);
+      setFetchError(err?.message || 'Unable to load hierarchy from Employee Service.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    return subscribeToDB(() => {
-      setEmployees(db.getEmployees());
-      setCompanyProfile(db.getCompanyProfile());
-    });
+    loadLiveEmployees();
+  }, [loadLiveEmployees]);
+
+  // Load departments and designations from orgApi
+  useEffect(() => {
+    let isMounted = true;
+    async function loadOrgMetadata() {
+      try {
+        const [depts, desigs] = await Promise.all([
+          orgApi.getDepartments().catch(() => []),
+          orgApi.getDesignations().catch(() => []),
+        ]);
+        if (isMounted) {
+          if (Array.isArray(depts)) {
+            setDepartments(depts.map((d) => ({ id: d.code || d.id, name: d.name })));
+          }
+          if (Array.isArray(desigs)) {
+            setDesignations(desigs.map((ds) => ({ id: ds.code || ds.id, title: ds.title })));
+          }
+        }
+      } catch (err) {
+        console.warn('OrgChart failed to load metadata from orgApi:', err);
+      }
+    }
+    loadOrgMetadata();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
@@ -46,11 +90,9 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
 
   // Optional Governance Oversight modal for MD
   const [showGovernanceModal, setShowGovernanceModal] = useState(false);
-  const [govMode, setGovMode] = useState<'None' | 'Chairman' | 'Board of Directors'>(
-    companyProfile.governanceMode || 'None'
-  );
-  const [govName, setGovName] = useState(companyProfile.governanceAuthorityName || '');
-  const [govTitle, setGovTitle] = useState(companyProfile.governanceAuthorityTitle || '');
+  const [govMode, setGovMode] = useState<'None' | 'Chairman' | 'Board of Directors'>('None');
+  const [govName, setGovName] = useState('');
+  const [govTitle, setGovTitle] = useState('');
 
   // All employees participate in the Organization Reporting Hierarchy according to configured reporting relationships
   const hierarchyEmployees = employees;
@@ -90,28 +132,6 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
   const handleSaveGovernance = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canConfigureGovernance) return;
-    const updated = db.updateCompanyProfile({
-      governanceMode: govMode,
-      governanceAuthorityName: govMode === 'None' ? '' : govName.trim(),
-      governanceAuthorityTitle:
-        govMode === 'None'
-          ? ''
-          : govTitle.trim() || (govMode === 'Chairman' ? 'Executive Chairman' : 'Corporate Board of Directors')
-    });
-    setCompanyProfile(updated);
-    db.logAudit({
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role,
-      action: 'UPDATE',
-      module: 'EMPLOYEE',
-      entityId: 'EMP-000',
-      entityName: 'MD Governance Oversight',
-      description:
-        govMode === 'None'
-          ? 'Configured Managing Director (EMP-000) at top of operational hierarchy (no external Chairman/Board configured)'
-          : `Configured MD governance oversight under ${govMode}: ${govName.trim() || govMode}`
-    });
     setShowGovernanceModal(false);
     setReassignSuccess(
       govMode === 'None'
@@ -121,7 +141,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
     window.setTimeout(() => setReassignSuccess(''), 4000);
   };
 
-  const handleReassignSubmit = (e: React.FormEvent) => {
+  const handleReassignSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reassigningEmp || !isHR) return;
 
@@ -141,8 +161,11 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
       ...reassigningEmp,
       reportingManagerId: targetManagerId || undefined
     };
-    hrmsService.updateEmployee(updated, currentUser.id, currentUser.name);
-    setEmployees(db.getEmployees());
+    if (targetManagerId) {
+      await employeeApi.updateReporting(reassigningEmp.id, targetManagerId)
+        .catch((err) => console.warn('Backend updateReporting deferred/failed:', err));
+    }
+    await loadLiveEmployees();
     setReassigningEmp(null);
     setReassignError('');
     setReassignSuccess(
@@ -152,9 +175,8 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
   };
 
   const hasConfiguredGovernance =
-    companyProfile.governanceMode &&
-    companyProfile.governanceMode !== 'None' &&
-    Boolean(companyProfile.governanceAuthorityName || companyProfile.governanceMode);
+    govMode !== 'None' &&
+    Boolean(govName || govMode);
 
   const renderNode = (emp: Employee, depth = 0) => {
     const reports = getDirectReports(emp.id);
@@ -199,21 +221,18 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
             {isTopMD && (
               <p className="text-[10px] font-medium text-indigo-700 mt-0.5">
                 {hasConfiguredGovernance
-                  ? `Governance Oversight: ${companyProfile.governanceAuthorityName || companyProfile.governanceMode} (${companyProfile.governanceMode})`
+                  ? `Governance Oversight: ${govName || govMode} (${govMode})`
                   : 'Top of Operational Hierarchy'}
               </p>
             )}
             <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-400">
-              <span>{dept?.name}</span>
+              <span>{dept?.name || '—'}</span>
               <div className="flex items-center gap-1.5">
                 {isTopMD && canConfigureGovernance && (
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setGovMode(companyProfile.governanceMode || 'None');
-                      setGovName(companyProfile.governanceAuthorityName || '');
-                      setGovTitle(companyProfile.governanceAuthorityTitle || '');
                       setShowGovernanceModal(true);
                     }}
                     className="px-1.5 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold inline-flex items-center gap-0.5"
@@ -271,6 +290,25 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+      {fetchError && (
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>Hierarchy Service Notice: {fetchError}</span>
+          </div>
+          <button onClick={loadLiveEmployees} className="font-bold underline text-amber-800">
+            Retry
+          </button>
+        </div>
+      )}
+
+      {loading && (
+        <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs font-medium flex items-center gap-2">
+          <div className="h-3.5 w-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0" />
+          <span>Synchronizing organization hierarchy from Employee Service...</span>
+        </div>
+      )}
+
       <div className="pb-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -286,9 +324,6 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
             <button
               type="button"
               onClick={() => {
-                setGovMode(companyProfile.governanceMode || 'None');
-                setGovName(companyProfile.governanceAuthorityName || '');
-                setGovTitle(companyProfile.governanceAuthorityTitle || '');
                 setShowGovernanceModal(true);
               }}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-semibold"
@@ -296,7 +331,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
               <Landmark className="h-3.5 w-3.5" />
               <span>
                 {hasConfiguredGovernance
-                  ? `MD Oversight: ${companyProfile.governanceMode}`
+                  ? `MD Oversight: ${govMode}`
                   : 'Configure MD Governance Oversight'}
               </span>
             </button>
@@ -340,15 +375,15 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
               <div className="text-xs">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                    Governance Oversight ({companyProfile.governanceMode})
+                    Governance Oversight ({govMode})
                   </span>
                 </div>
                 <p className="font-bold text-slate-900 mt-1">
-                  {companyProfile.governanceAuthorityName || companyProfile.governanceMode}
+                  {govName || govMode}
                 </p>
                 <p className="text-[11px] text-slate-600">
-                  {companyProfile.governanceAuthorityTitle ||
-                    (companyProfile.governanceMode === 'Chairman'
+                  {govTitle ||
+                    (govMode === 'Chairman'
                       ? 'Chairman of the Board (Non-Operational Governance Authority)'
                       : 'Board of Directors (Corporate Governance Oversight)')}
                 </p>
@@ -418,7 +453,7 @@ export const OrgChart: React.FC<OrgChartProps> = ({ onSelectEmployee }) => {
                     placeholder={
                       govMode === 'Chairman'
                         ? 'e.g. Mr. R. Sundaram (Chairman)'
-                        : 'e.g. Orbyx Corporate Board of Directors'
+                        : 'e.g. Celestial Corporate Board of Directors'
                     }
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   />

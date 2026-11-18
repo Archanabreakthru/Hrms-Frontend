@@ -54,187 +54,15 @@ import {
 } from './initialData';
 import { seedRealisticDemoRequests } from './demoDataSeeder';
 
-const DB_PREFIX = 'orbyx_hrms_v3_';
+const DB_PREFIX = 'celestial_hrms_v2_';
 
-export const initialGovernanceMembers: GovernanceMember[] = [
-  {
-    id: 'GOV-001',
-    name: 'Vikramaditya Sen',
-    role: 'Chairman',
-    email: 'v.sen.founder@orbyx.board',
-    phone: '+91 80 4092 1001',
-    avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80',
-    oversightTargetEmployeeId: 'EMP-000',
-    effectiveFrom: '2020-01-01',
-    isActive: true,
-    isPayrollEmployee: false,
-    committeeRole: 'Board Chairman & Founder Promoter',
-    notes: 'Presides over Board of Directors; provides strategic governance oversight to the Managing Director (EMP-000). Non-payroll governance position.',
-    updatedAt: '2026-10-01',
-    updatedBy: 'Rajeshwari Nair (Super Admin)'
-  },
-  {
-    id: 'GOV-002',
-    name: 'Justice (Retd.) Arundhati Deshmukh',
-    role: 'Independent Director',
-    email: 'a.deshmukh@orbyx.board',
-    phone: '+91 22 4091 9002',
-    avatarUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150&auto=format&fit=crop=80',
-    oversightTargetEmployeeId: 'EMP-000',
-    effectiveFrom: '2022-04-01',
-    isActive: true,
-    isPayrollEmployee: false,
-    committeeRole: 'Chairperson - Audit, Risk & Remuneration Committee',
-    notes: 'Independent non-executive Board Member overseeing statutory compliance and executive governance.',
-    updatedAt: '2026-10-01',
-    updatedBy: 'Rajeshwari Nair (Super Admin)'
-  }
-];
+export const initialGovernanceMembers: GovernanceMember[] = [];
 
-export const initialGovernanceHistory: GovernanceHistoryEntry[] = [
-  {
-    id: 'GOV-HIST-001',
-    timestamp: '2026-04-01T09:00:00Z',
-    memberId: 'GOV-001',
-    memberName: 'Vikramaditya Sen',
-    role: 'Chairman',
-    action: 'OVERSIGHT_LINKED',
-    effectiveDate: '2020-01-01',
-    actorUserId: 'user_super_admin',
-    actorName: 'Rajeshwari Nair',
-    details: 'Confirmed Chairman of the Board governance oversight over Managing Director Dr. Selvakumar (EMP-000)'
-  },
-  {
-    id: 'GOV-HIST-002',
-    timestamp: '2026-04-01T09:15:00Z',
-    memberId: 'GOV-002',
-    memberName: 'Justice (Retd.) Arundhati Deshmukh',
-    role: 'Independent Director',
-    action: 'CREATED',
-    effectiveDate: '2022-04-01',
-    actorUserId: 'user_super_admin',
-    actorName: 'Rajeshwari Nair',
-    details: 'Appointed Independent Director to Board Audit & Remuneration Committee above MD'
-  }
-];
+export const initialGovernanceHistory: GovernanceHistoryEntry[] = [];
 
-export const initialClientEmailConfirmations: ClientEmailConfirmation[] = [
-  {
-    id: 'CEC-2026-001',
-    assignmentId: 'CAS-201',
-    clientId: 'CLI-101',
-    clientName: 'Apex FinTech Global',
-    employeeId: 'EMP-003',
-    project: 'Core Banking Ledger Modernization',
-    senderName: 'Vikramaditya Rao',
-    senderEmail: 'v.rao@apexfintech.example.com',
-    confirmationDate: '2026-10-22',
-    attendanceStartDate: '2026-10-01',
-    attendanceEndDate: '2026-10-22',
-    confirmedDaysCount: 16,
-    confirmedHoursTotal: 128,
-    summary: 'Client Delivery Director email confirming 16 onsite billing days (128 hrs) for Archana at Mumbai BKC site with zero absences.',
-    messageIdReference: 'MSG-APEX-20261022-9941',
-    attachmentFileName: 'ApexFinTech_Signed_Timesheet_Oct2026_EMP003.pdf',
-    authenticityStatus: 'Verified Supporting Document Attached',
-    recordedByUserId: 'user_hr_admin',
-    recordedByName: 'Anamika',
-    recordedAt: '2026-10-22T17:30:00Z',
-    verificationOutcome: 'Verified by Client',
-    companyApprovalStatus: 'Approved for Payroll',
-    companyApprovedBy: 'Krishnaraj',
-    companyApprovedAt: '2026-10-23',
-    reviewComments: 'Cross-checked against signed client PDF attachment and approved for October payroll.'
-  },
-  {
-    id: 'CEC-2026-002',
-    assignmentId: 'CAS-202',
-    clientId: 'CLI-102',
-    clientName: 'Horizon Retail Systems',
-    employeeId: 'EMP-004',
-    project: 'Omnichannel Checkout Microservices',
-    senderName: 'Meera Krishnan',
-    senderEmail: 'meera.k@horizonretail.example.com',
-    confirmationDate: '2026-10-24',
-    attendanceStartDate: '2026-10-01',
-    attendanceEndDate: '2026-10-24',
-    confirmedDaysCount: 17,
-    confirmedHoursTotal: 136.5,
-    summary: 'Weekly client supervisor email verification for Mahalakshmi (17 days present, including 0.5h sprint deployment overtime on Oct 21).',
-    messageIdReference: 'MSG-HRZN-20261024-3318',
-    attachmentFileName: 'Horizon_Email_Confirmation_Oct24.eml',
-    authenticityStatus: 'Manually Recorded by Authorized User',
-    recordedByUserId: 'user_manager',
-    recordedByName: 'Krishnaraj',
-    recordedAt: '2026-10-24T15:10:00Z',
-    verificationOutcome: 'Verified by Client',
-    companyApprovalStatus: 'Pending HR/Manager Final Approval',
-    reviewComments: 'Client supervisor verified email logged; awaiting final HR/Manager sign-off for payroll.'
-  }
-];
+export const initialClientEmailConfirmations: ClientEmailConfirmation[] = [];
 
-export const initialDelegations: DelegationRecord[] = [
-  {
-    id: 'DEL-2026-001',
-    delegatorUserId: 'user_md_selvakumar',
-    delegatorEmployeeId: 'EMP-000',
-    delegatorName: 'Dr. Selvakumar',
-    delegatorRole: 'senior_manager',
-    delegateUserId: 'user_hr_admin',
-    delegateEmployeeId: 'EMP-001',
-    delegateName: 'Anamika',
-    delegateRole: 'hr_admin',
-    permittedActions: ['APPROVE_LEAVE', 'APPROVE_ATTENDANCE', 'APPROVE_EXPENSE', 'APPROVE_POLICY'],
-    applicableModules: ['Leave', 'Attendance', 'Expense', 'Policies'],
-    effectiveFrom: '2026-10-01',
-    effectiveTo: '2026-12-31',
-    reason: 'Delegated executive operational approvals during Q4 international client roadshow.',
-    status: 'Active',
-    grantedByUserId: 'user_md_selvakumar',
-    grantedByName: 'Dr. Selvakumar (MD)',
-    createdAt: '2026-10-01T09:00:00Z'
-  },
-  {
-    id: 'DEL-2026-002',
-    delegatorUserId: 'user_founder',
-    delegatorEmployeeId: 'GOV-001',
-    delegatorName: 'Vikramaditya Sen',
-    delegatorRole: 'founder',
-    delegateUserId: 'user_md_selvakumar',
-    delegateEmployeeId: 'EMP-000',
-    delegateName: 'Dr. Selvakumar',
-    delegateRole: 'senior_manager',
-    permittedActions: ['APPROVE_POLICY', 'CONFIGURE_GOVERNANCE', 'APPROVE_PAYROLL'],
-    applicableModules: ['Policies', 'Organization', 'Payroll'],
-    effectiveFrom: '2026-04-01',
-    effectiveTo: '2027-03-31',
-    reason: 'Annual Board resolution authorizing Managing Director to execute Founder policy & payroll sign-offs.',
-    status: 'Active',
-    grantedByUserId: 'user_founder',
-    grantedByName: 'Vikramaditya Sen (Founder & Chairman)',
-    createdAt: '2026-04-01T10:00:00Z'
-  },
-  {
-    id: 'DEL-2026-003',
-    delegatorUserId: 'user_md_selvakumar',
-    delegatorEmployeeId: 'EMP-000',
-    delegatorName: 'Dr. Selvakumar',
-    delegatorRole: 'senior_manager',
-    delegateUserId: 'user_manager',
-    delegateEmployeeId: 'EMP-002',
-    delegateName: 'Krishnaraj',
-    delegateRole: 'reporting_manager',
-    permittedActions: ['APPROVE_EXPENSE', 'MANAGE_CLIENT_DEPLOYMENTS'],
-    applicableModules: ['Expense', 'Clients'],
-    effectiveFrom: '2026-08-01',
-    effectiveTo: '2026-09-30',
-    reason: 'Temporary Q3 delivery budget delegation (now expired).',
-    status: 'Expired',
-    grantedByUserId: 'user_md_selvakumar',
-    grantedByName: 'Dr. Selvakumar (MD)',
-    createdAt: '2026-08-01T09:00:00Z'
-  }
-];
+export const initialDelegations: DelegationRecord[] = [];
 
 export const initialPolicies: PolicyRule[] = [
   {
@@ -465,42 +293,7 @@ export const initialPolicies: PolicyRule[] = [
   }
 ];
 
-export const initialPolicyAcknowledgements: PolicyAcknowledgement[] = [
-  {
-    id: 'PACK-001',
-    policyId: 'POL-ORG-001',
-    policyCode: 'ORG-PROB-60',
-    policyName: 'Standard Probation & Notice Period Policy',
-    versionNumber: '1.0',
-    employeeId: 'EMP-003',
-    status: 'Acknowledged',
-    acknowledgedAt: '2026-10-05T10:15:00Z',
-    dueDate: '2026-10-31',
-    comments: 'Read and understood probation and notice terms.'
-  },
-  {
-    id: 'PACK-002',
-    policyId: 'POL-LV-001',
-    policyCode: 'LV-ACCRUAL-2026',
-    policyName: 'Annual Leave Accrual & Carry-Forward Rule',
-    versionNumber: '1.0',
-    employeeId: 'EMP-003',
-    status: 'Acknowledged',
-    acknowledgedAt: '2026-10-06T11:20:00Z',
-    dueDate: '2026-10-31'
-  },
-  {
-    id: 'PACK-003',
-    policyId: 'POL-ORG-001',
-    policyCode: 'ORG-PROB-60',
-    policyName: 'Standard Probation & Notice Period Policy',
-    versionNumber: '1.0',
-    employeeId: 'EMP-004',
-    status: 'Acknowledged',
-    acknowledgedAt: '2026-10-07T09:45:00Z',
-    dueDate: '2026-10-31'
-  }
-];
+export const initialPolicyAcknowledgements: PolicyAcknowledgement[] = [];
 
 type StorageListener = () => void;
 const listeners = new Set<StorageListener>();
@@ -608,10 +401,17 @@ export function initDatabase(): void {
         setItem('designations', initialDesignations);
         setItem('departments', initialDepartments);
       }
+
+      // Purge legacy mock payroll batch if present
+      const runs = getItem<PayrollRun[]>('payrollRuns', []);
+      if (runs.some((r) => r.id === 'PR-2026-09' || r.paymentReference === 'NEFT-SAL-SEP2026-BATCH01')) {
+        setItem('payrollRuns', []);
+        setItem('payrollLineItems', []);
+      }
     } catch {
       // ignore
     }
-    seedRealisticDemoRequests();
+    // seedRealisticDemoRequests();
   }
 }
 
@@ -654,74 +454,13 @@ export function resetToSeedData(): void {
     JSON.stringify(initialClientSupervisors)
   );
   localStorage.setItem(DB_PREFIX + 'initialized', 'true');
-  seedRealisticDemoRequests();
+  // seedRealisticDemoRequests();
   notifySubscribers();
 }
 
 // ---------------- TYPED REPOSITORIES ----------------
 
-export const initialClientSupervisors: ClientSupervisor[] = [
-  {
-    id: 'CSUP-101',
-    clientId: 'CLI-101',
-    clientName: 'Apex FinTech Global',
-    name: 'Vikramaditya Rao',
-    officialEmail: 'v.rao@apexfintech.example.com',
-    phone: '+91 22 4091 8800',
-    status: 'Active',
-    assignedDeploymentIds: ['CAS-201', 'CAS-203'],
-    invitationStatus: 'Accepted',
-    invitationToken: 'INV-APEX-RAO-9821',
-    invitedAt: '2026-03-15T09:00:00Z',
-    acceptedAt: '2026-03-15T10:30:00Z',
-    lastLoginAt: '2026-11-03T09:15:00Z',
-    notes: 'Primary supervisor for Apex FinTech deployments. Authorized to record and approve daily onsite and remote attendance.'
-  },
-  {
-    id: 'CSUP-102',
-    clientId: 'CLI-102',
-    clientName: 'Horizon Retail Systems',
-    name: 'Meera Krishnan',
-    officialEmail: 'meera.k@horizonretail.example.com',
-    phone: '+91 80 4112 7300',
-    status: 'Active',
-    assignedDeploymentIds: ['CAS-202'],
-    invitationStatus: 'Accepted',
-    invitationToken: 'INV-HORIZON-MEERA-4412',
-    invitedAt: '2026-04-01T11:00:00Z',
-    acceptedAt: '2026-04-01T14:20:00Z',
-    lastLoginAt: '2026-11-02T16:45:00Z',
-    notes: 'Delivery lead and supervisor for Horizon Omnichannel deployments.'
-  },
-  {
-    id: 'CSUP-103',
-    clientId: 'CLI-101',
-    clientName: 'Apex FinTech Global',
-    name: 'Rohan Mehta',
-    officialEmail: 'rohan.m@apexfintech.example.com',
-    phone: '+91 22 4091 8899',
-    status: 'Inactive',
-    assignedDeploymentIds: [],
-    invitationStatus: 'Revoked',
-    invitationToken: 'INV-APEX-MEHTA-9901',
-    invitedAt: '2026-02-01T10:00:00Z',
-    notes: 'Account deactivated by Orbyx HR Admin (Test case for inactive account restriction).'
-  },
-  {
-    id: 'CSUP-104',
-    clientId: 'CLI-102',
-    clientName: 'Horizon Retail Systems',
-    name: 'Ananya Verma',
-    officialEmail: 'ananya.v@horizonretail.example.com',
-    phone: '+91 80 4112 7311',
-    status: 'Active',
-    assignedDeploymentIds: ['CAS-202'],
-    invitationStatus: 'Expired',
-    invitationToken: 'INV-HORIZON-ANANYA-EXP-772',
-    invitedAt: '2026-09-01T10:00:00Z',
-    notes: 'Invitation expired (Test case for expired invitation link).'
-  }
-];
+export const initialClientSupervisors: ClientSupervisor[] = [];
 
 export const db = {
   // Company Profile
@@ -894,6 +633,10 @@ export const db = {
     const idx = list.findIndex((s) => s.id === structure.id);
     if (idx >= 0) list[idx] = structure;
     else list.push(structure);
+    setItem('salaryStructures', list);
+  },
+  deleteSalaryStructure(id: string): void {
+    const list = this.getSalaryStructures().filter((s) => s.id !== id);
     setItem('salaryStructures', list);
   },
 

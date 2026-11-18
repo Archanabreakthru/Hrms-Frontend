@@ -260,7 +260,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               <FileCheck className="h-4 w-4" />
               Direct Deposit Verified
             </span>
-            <p className="text-[10px] text-indigo-300 mt-1">System-generated Orbyx HRMS statement.</p>
+            <p className="text-[10px] text-indigo-300 mt-1">System-generated Celestial HRMS statement.</p>
           </div>
         </div>
 

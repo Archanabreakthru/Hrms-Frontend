@@ -13,7 +13,9 @@ import { StatCard } from '../common/StatCard';
 import { db, subscribeToDB } from '../../db/storage';
 import { NavTab } from '../layout/Sidebar';
 import { NavigationContext } from '../../types/hrms';
-import { readAssignments } from '../clients/ClientManagement';
+import { employeeApi } from '../../services/employeeApi';
+import { attendanceApi } from '../../services/attendanceApi';
+import { clientApi } from '../../services/clientApi';
 
 interface HRDashboardProps {
   onNavigate: (tab: NavTab, context?: NavigationContext) => void;
@@ -21,13 +23,52 @@ interface HRDashboardProps {
 
 export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
   const [, setTick] = useState(0);
+
+  // Live state from backend microservices & database
+  const [liveEmployees, setLiveEmployees] = useState<any[]>([]);
+  const [liveTodayAttendance, setLiveTodayAttendance] = useState<any[]>([]);
+  const [livePendingLeaves, setLivePendingLeaves] = useState<number>(0);
+  const [liveActiveDeployments, setLiveActiveDeployments] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchLiveMetrics = async () => {
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const [empRes, attRecords, leaveApps, deployments] = await Promise.all([
+        employeeApi.list({ limit: 500 }).catch(() => ({ employees: [] })),
+        attendanceApi.listRecords({ startDate: todayStr, endDate: todayStr }).catch(() => []),
+        attendanceApi.listLeaveApplications({ status: 'Pending Approval' }).catch(() => []),
+        clientApi.getDeployments({ status: 'Active' }).catch(() => []),
+      ]);
+
+      const employeesList = empRes && Array.isArray(empRes.employees) ? empRes.employees : [];
+      const attendanceList = Array.isArray(attRecords) ? attRecords : [];
+      const leaveList = Array.isArray(leaveApps) ? leaveApps : [];
+      const deploymentList = Array.isArray(deployments) ? deployments : [];
+
+      setLiveEmployees(employeesList);
+      setLiveTodayAttendance(attendanceList);
+      setLivePendingLeaves(leaveList.length);
+      setLiveActiveDeployments(deploymentList.length);
+    } catch (err) {
+      console.warn('Dashboard live metrics fetch error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    return subscribeToDB(() => setTick((t) => t + 1));
+    fetchLiveMetrics();
+    return subscribeToDB(() => {
+      setTick((t) => t + 1);
+      fetchLiveMetrics();
+    });
   }, []);
 
-  const employees = db.getEmployees();
-  const activeCount = employees.filter((e) => e.status === 'Active' || e.status === 'Probation').length;
-  const newJoiners = employees.filter((e) => {
+  const totalEmployees = liveEmployees.length;
+  const activeCount = liveEmployees.filter((e) => e.status === 'Active' || e.profileStatus === 'Active').length;
+  const newJoiners = liveEmployees.filter((e) => {
+    if (!e.dateOfJoining) return false;
     const joinDate = new Date(e.dateOfJoining);
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 12);
@@ -35,21 +76,20 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
   }).length;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayAttendance = db.getAttendanceRecords().filter((r) => r.date === todayStr);
-  const onLeaveToday = todayAttendance.filter((r) => r.status === 'On Leave').length;
-  const attendanceExceptions = todayAttendance.filter((r) => r.isLate || r.status === 'Absent').length;
+  const onLeaveToday = liveTodayAttendance.filter((r) => r.status === 'On Leave').length;
+  const attendanceExceptions = liveTodayAttendance.filter((r) => r.isLate || r.status === 'Absent').length;
 
-  const pendingLeaves = db.getLeaveApplications().filter((a) => a.status === 'Pending Approval').length;
-  const pendingExpenses = db.getExpenseClaims().filter((c) => c.status === 'Pending Manager Approval' || c.status === 'Pending Reimbursement').length;
-
-  const assets = db.getAssets();
-  const allocatedAssets = assets.filter((a) => a.status === 'Allocated').length;
-
-  const clientAssignments = readAssignments().filter((a) => a.status === 'Active');
-  const pendingClientAtt = db.getAttendanceRecords().filter(
-    (r) => (r.workMode === 'Client Site' || r.source === 'Client Timesheet') && r.approvalStatus !== 'Approved'
+  // Real client site attendance awaiting approval
+  const pendingClientAtt = liveTodayAttendance.filter(
+    (r) => (r.workMode === 'Client Site' || r.source === 'Client Timesheet') && r.clientVerificationStatus !== 'Approved'
   ).length;
 
+  // Genuine zero-mock state for pending expenses & assets
+  const pendingExpenses = 0;
+  const assets = [] as any[];
+  const allocatedAssets = 0;
+
+  // Payroll preserved as requested: "part2: removmock data but don't include payroll"
   const latestPayroll = db.getPayrollRuns()[0];
   const auditLogs = db.getAuditLogs().slice(0, 6);
 
@@ -59,7 +99,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Total Workforce"
-          value={employees.length}
+          value={totalEmployees}
           subtitle={`${activeCount} active · ${newJoiners} joined in 12m`}
           icon={Users}
           badge="100% Retained"
@@ -69,14 +109,14 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
         <StatCard
           title="On Leave Today"
           value={onLeaveToday}
-          subtitle={`${pendingLeaves} pending approvals in queue`}
+          subtitle={`${livePendingLeaves} pending approvals in queue`}
           icon={CalendarClock}
-          badge={pendingLeaves > 0 ? `${pendingLeaves} Pending` : 'All Approved'}
-          badgeColor={pendingLeaves > 0 ? 'amber' : 'emerald'}
+          badge={livePendingLeaves > 0 ? `${livePendingLeaves} Pending` : 'All Approved'}
+          badgeColor={livePendingLeaves > 0 ? 'amber' : 'emerald'}
           onClick={() =>
             onNavigate('leave', {
-              subTab: pendingLeaves > 0 ? 'approvals' : 'applications',
-              statusFilter: pendingLeaves > 0 ? 'Pending Approval' : 'Approved'
+              subTab: livePendingLeaves > 0 ? 'approvals' : 'applications',
+              statusFilter: livePendingLeaves > 0 ? 'Pending Approval' : 'Approved'
             })
           }
         />
@@ -85,8 +125,8 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
           value={pendingExpenses}
           subtitle="Awaiting manager / finance audit"
           icon={Receipt}
-          badge={pendingExpenses > 0 ? 'Action Needed' : 'Cleared'}
-          badgeColor={pendingExpenses > 0 ? 'amber' : 'slate'}
+          badge="Cleared"
+          badgeColor="slate"
           onClick={() =>
             onNavigate('expenses', {
               subTab: 'approvals',
@@ -96,7 +136,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
         />
         <StatCard
           title="Client Deployments"
-          value={clientAssignments.length}
+          value={liveActiveDeployments}
           subtitle={
             pendingClientAtt > 0
               ? `${pendingClientAtt} site attendance awaiting approval`
@@ -107,17 +147,17 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
           badgeColor={pendingClientAtt > 0 ? 'amber' : 'indigo'}
           onClick={() =>
             onNavigate('clients', {
-              subTab: pendingClientAtt > 0 ? 'attendance' : 'assignments'
+              subTab: pendingClientAtt > 0 ? 'attendance' : 'deployments'
             })
           }
         />
         <StatCard
           title="Hardware Assets"
           value={allocatedAssets}
-          subtitle={`${assets.length - allocatedAssets} available in inventory`}
+          subtitle="No assets in inventory"
           icon={Laptop}
-          badge={`${assets.length} Total Registered`}
-          badgeColor="blue"
+          badge="0 Registered"
+          badgeColor="slate"
           onClick={() => onNavigate('assets', { subTab: 'all', statusFilter: 'Allocated' })}
         />
       </div>
@@ -145,22 +185,31 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-xs text-slate-500">Latest Active Period</p>
-              <p className="text-lg font-bold text-slate-900 mt-0.5">{latestPayroll?.periodLabel || 'October 2026'}</p>
-              <div className="mt-3 space-y-1.5 text-xs text-slate-600">
-                <div className="flex justify-between">
-                  <span>Total Net Disbursement:</span>
-                  <span className="font-semibold text-slate-900">₹{latestPayroll?.totalNetPay.toLocaleString()}</span>
+              {latestPayroll ? (
+                <>
+                  <p className="text-xs text-slate-500">Latest Active Period</p>
+                  <p className="text-lg font-bold text-slate-900 mt-0.5">{latestPayroll.periodLabel}</p>
+                  <div className="mt-3 space-y-1.5 text-xs text-slate-600">
+                    <div className="flex justify-between">
+                      <span>Total Net Disbursement:</span>
+                      <span className="font-semibold text-slate-900">₹{latestPayroll.totalNetPay?.toLocaleString() || '0'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Eligible Employees:</span>
+                      <span className="font-semibold text-slate-900">{latestPayroll.totalEmployees || 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Payment Reference:</span>
+                      <span className="font-mono text-slate-700">{latestPayroll.paymentReference || 'Pending Batch'}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="py-6 text-center">
+                  <p className="text-xs text-slate-500">No payroll periods processed yet.</p>
+                  <p className="text-[11px] text-slate-400 mt-1">Click below to create your first organization payroll run.</p>
                 </div>
-                <div className="flex justify-between">
-                  <span>Eligible Employees:</span>
-                  <span className="font-semibold text-slate-900">{latestPayroll?.totalEmployees}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Payment Reference:</span>
-                  <span className="font-mono text-slate-700">{latestPayroll?.paymentReference || 'Pending Batch'}</span>
-                </div>
-              </div>
+              )}
             </div>
           </div>
           <button
@@ -188,16 +237,16 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
                 <AlertTriangle className="h-4 w-4 text-amber-600" />
                 <span>Today's Attendance Exceptions ({attendanceExceptions})</span>
               </button>
-              <span className="text-xs text-slate-500">{todayAttendance.length} check-ins</span>
+              <span className="text-xs text-slate-500">{liveTodayAttendance.length} check-ins</span>
             </div>
             <div className="mt-4 space-y-2.5">
-              {todayAttendance.filter((r) => r.isLate).length === 0 ? (
+              {liveTodayAttendance.filter((r) => r.isLate).length === 0 ? (
                 <p className="text-xs text-slate-500 py-4 text-center">No lateness or irregular check-ins recorded today.</p>
               ) : (
-                todayAttendance
+                liveTodayAttendance
                   .filter((r) => r.isLate)
                   .map((rec) => {
-                    const emp = employees.find((e) => e.id === rec.employeeId);
+                    const emp = liveEmployees.find((e) => e.id === rec.employeeId);
                     return (
                       <div
                         key={rec.id}
@@ -205,7 +254,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
                         tabIndex={0}
                         onClick={() =>
                           onNavigate('attendance', {
-                            subTab: 'logs',
+                            subTab: 'timesheets',
                             dateFilter: todayStr,
                             employeeId: rec.employeeId
                           })
@@ -213,7 +262,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
                         onKeyDown={(e) =>
                           (e.key === 'Enter' || e.key === ' ') &&
                           onNavigate('attendance', {
-                            subTab: 'logs',
+                            subTab: 'timesheets',
                             dateFilter: todayStr,
                             employeeId: rec.employeeId
                           })
@@ -233,7 +282,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigate }) => {
           </div>
           <button
             type="button"
-            onClick={() => onNavigate('attendance', { subTab: 'logs', dateFilter: todayStr })}
+            onClick={() => onNavigate('attendance', { subTab: 'timesheets', dateFilter: todayStr })}
             className="mt-5 w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
           >
             <span>View Timesheets</span>

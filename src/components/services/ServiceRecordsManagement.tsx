@@ -3,6 +3,7 @@ import { db, subscribeToDB } from '../../db/storage';
 import { ServiceRecord, ServiceRecordType, Employee, EmploymentType } from '../../types/hrms';
 import { useAuth } from '../../services/authContext';
 import { permissionService } from '../../services/permissionService';
+import { employeeApi, BackendServiceRecord } from '../../services/employeeApi';
 import { calculateServiceYears } from '../../utils/profileUtils';
 import { Avatar } from '../common/Avatar';
 import {
@@ -41,18 +42,43 @@ export const ServiceRecordsManagement: React.FC = () => {
   const { currentUser } = useAuth();
   const [dbTick, setDbTick] = useState(0);
 
+  const [liveEmployees, setLiveEmployees] = useState<Employee[]>([]);
+  const [liveRecords, setLiveRecords] = useState<ServiceRecord[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+
   // Subscribe to DB updates
   useEffect(() => {
     return subscribeToDB(() => setDbTick((t) => t + 1));
   }, []);
 
-  const allEmployees = db.getEmployees();
+  const loadData = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      const empRes = await employeeApi.list({ limit: 100 });
+      if (empRes && empRes.employees) {
+        setLiveEmployees(empRes.employees);
+      }
+      setApiError(null);
+    } catch (err: any) {
+      console.warn('ServiceRecordsManagement live fetch error:', err);
+      setApiError(err?.message || 'Unable to connect to live Employee Service.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData, dbTick]);
+
+  const allEmployees = liveEmployees.length > 0 ? liveEmployees : [];
   const departments = db.getDepartments();
   const designations = db.getDesignations();
   const branches = db.getBranches();
 
   // Role permissions
-  const isHR = currentUser.role === 'hr_admin';
+  const isHR = currentUser.role === 'super_admin' || currentUser.role === 'admin' || currentUser.role === 'hr_admin';
   const isSeniorManager = currentUser.role === 'senior_manager';
   const isReportingManager = currentUser.role === 'reporting_manager';
   const isRegularEmployee = currentUser.role === 'employee';
@@ -93,12 +119,47 @@ export const ServiceRecordsManagement: React.FC = () => {
   // Raw records filtered strictly by permitted scope
   const rawRecords = db.getServiceRecords().filter((r) => permittedEmpIds.has(r.employeeId));
 
-  // Employee-specific service history records
-  const employeeRecords = activeEmployee
-    ? rawRecords
-        .filter((r) => r.employeeId === activeEmployee.id)
-        .sort((a, b) => new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime())
-    : [];
+  // Fetch live backend service records whenever selected active employee changes
+  useEffect(() => {
+    if (activeEmployee?.id) {
+      employeeApi.getServiceRecords(activeEmployee.id)
+        .then((recs) => {
+          if (recs && Array.isArray(recs)) {
+            const mapped: ServiceRecord[] = recs.map((r) => ({
+              id: r.id,
+              employeeId: r.employeeId,
+              employeeName: `${activeEmployee.firstName} ${activeEmployee.lastName}`.trim(),
+              recordType: r.recordType as any,
+              effectiveDate: String(r.effectiveDate).split('T')[0],
+              previousDesignation: designations.find((d) => d.id === r.previousDesignationId)?.title,
+              newDesignation: designations.find((d) => d.id === r.newDesignationId)?.title,
+              previousDepartment: departments.find((d) => d.id === r.previousDepartmentId)?.name,
+              newDepartment: departments.find((d) => d.id === r.newDepartmentId)?.name,
+              previousReportingManager: r.previousReportingManagerId || undefined,
+              newReportingManager: r.newReportingManagerId || undefined,
+              previousBranch: branches.find((b) => b.id === r.previousBranchId)?.name,
+              newBranch: branches.find((b) => b.id === r.newBranchId)?.name,
+              previousEmploymentType: r.previousEmploymentType as any,
+              newEmploymentType: r.newEmploymentType as any,
+              previousSalary: r.previousSalaryAmount || undefined,
+              revisedSalary: r.newSalaryAmount || undefined,
+              description: r.notes || undefined,
+              createdBy: 'System / HR Administrator',
+              approvalStatus: (r.approvalStatus as any) || 'Approved',
+              approvedBy: r.approvedBy || undefined,
+              createdDate: String(r.createdAt).split('T')[0],
+            }));
+            setLiveRecords(mapped);
+          }
+        })
+        .catch((err) => {
+          console.warn('Failed to load backend service records:', err);
+        });
+    }
+  }, [activeEmployee?.id, designations, departments, branches]);
+
+  // Authoritative employee service records from backend PostgreSQL API
+  const employeeRecords = activeEmployee ? liveRecords : [];
 
   // Search & Filter state for Employee List / Timeline
   const [searchQuery, setSearchQuery] = useState('');
@@ -237,6 +298,19 @@ export const ServiceRecordsManagement: React.FC = () => {
 
     db.saveServiceRecord(newRecord);
 
+    // Persist to live Employee Service backend
+    employeeApi.createServiceRecord(formTargetEmployee.id, {
+      recordType: srType,
+      effectiveDate: srEffectiveDate,
+      newDesignationId: designations.find((d) => d.title.toLowerCase() === (srNewDesig || '').toLowerCase())?.id,
+      newDepartmentId: departments.find((d) => d.name.toLowerCase() === (srNewDept || '').toLowerCase())?.id,
+      newBranchId: branches.find((b) => b.name.toLowerCase() === (srNewBranch || '').toLowerCase())?.id,
+      newEmploymentType: srNewEmpType,
+      newSalaryAmount: srRevisedSalary ? Number(srRevisedSalary) : undefined,
+      notes: srRemarks || srReason,
+      approvalStatus: isHR ? 'Approved' : 'Pending',
+    }).catch((err) => console.warn('Backend createServiceRecord deferred/failed:', err));
+
     // If auto-approved by HR, synchronize with employee master
     if (isHR) {
       const rawEmp = db.getEmployeeById(formTargetEmployee.id);
@@ -309,18 +383,18 @@ export const ServiceRecordsManagement: React.FC = () => {
   const handleUpdateStatus = (rec: ServiceRecord, status: 'Approved' | 'Rejected') => {
     if (!canApprove) return;
 
-    const allRecs = db.getServiceRecords();
-    const updatedList = allRecs.map((r) =>
-      r.id === rec.id
-        ? {
-            ...r,
-            approvalStatus: status,
-            approvedBy: currentUser.name,
-            approvalDate: new Date().toISOString().split('T')[0]
-          }
-        : r
-    );
-    localStorage.setItem('orbyx_hrms_v3_serviceRecords', JSON.stringify(updatedList));
+    db.saveServiceRecord({
+      ...rec,
+      approvalStatus: status,
+      approvedBy: currentUser.name,
+      approvalDate: new Date().toISOString().split('T')[0]
+    });
+
+    // Synchronize approval status with backend Employee Service
+    if (rec.id.length >= 20) {
+      employeeApi.updateServiceRecordStatus(rec.employeeId, rec.id, status)
+        .catch((err) => console.warn('Backend updateServiceRecordStatus deferred/failed:', err));
+    }
 
     if (status === 'Approved') {
       const rawEmp = db.getEmployeeById(rec.employeeId);
@@ -402,7 +476,7 @@ export const ServiceRecordsManagement: React.FC = () => {
               </h2>
               <p className="text-xs font-medium text-slate-600 mt-0.5">
                 {isRegularEmployee
-                  ? 'Official chronological timeline of your appointments, confirmations, promotions, and recognition at Orbyx.'
+                  ? 'Official chronological timeline of your appointments, confirmations, promotions, and recognition at Celestial.'
                   : 'Organization-wide official career histories, appointments, promotions, transfers, compensation revisions, and work anniversaries.'}
               </p>
             </div>
@@ -997,7 +1071,7 @@ export const ServiceRecordsManagement: React.FC = () => {
             </div>
 
             <div className="flex items-center justify-between pt-3 border-t border-slate-200">
-              <span className="text-[11px] text-slate-500 font-medium">Orbyx HRMS Certified Employment Record</span>
+              <span className="text-[11px] text-slate-500 font-medium">Celestial HRMS Certified Employment Record</span>
               <button
                 type="button"
                 onClick={() => setInspectedEvent(null)}

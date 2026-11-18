@@ -251,7 +251,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
       id: 'ATT-01',
       scenario: 'Test 1: Internal user login allowed; External client user blocked from login',
       passed,
-      expected: 'Internal Orbyx user allowed; external client supervisor strictly blocked from logging into Orbyx HRMS.',
+      expected: 'Internal Celestial user allowed; external client supervisor strictly blocked from logging into Celestial HRMS.',
       actual: passed ? `Internal allowed; External blocked (${externalClientSup.reason})` : 'External login check failed.',
       details: 'Verified validateLoginAttempt() & isInternalCompanyUser() reject external client emails and roles.'
     });
@@ -459,7 +459,7 @@ export function runSecurityTestSuite(): SecurityTestCaseResult[] {
       id: 'ATT-16',
       scenario: 'Test 16: Closing client deployment blocks post-closure attendance while preserving Active company employment',
       passed,
-      expected: 'Closed deployment CAS-203 blocks new attendance after actualEndDate while employee EMP-017 remains Active in Orbyx HRMS.',
+      expected: 'Closed deployment CAS-203 blocks new attendance after actualEndDate while employee EMP-017 remains Active in Celestial HRMS.',
       actual: 'Post-closure attendance blocked; historical corrections permitted; employee company status remains Active.',
       details: 'Verified closeAssignment() and getActiveEmployeeDeploymentForDate().'
     });

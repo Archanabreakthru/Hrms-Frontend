@@ -585,7 +585,7 @@ export const AssetManagement: React.FC<AssetManagementProps> = ({ navContext, on
               <span>Asset Policies →</span>
             </button>
           )}
-          <ExportButton data={exportData} fileName={isEmployee ? `Orbyx_My_Assets_${currentUser.employeeId}` : 'Orbyx_Asset_Inventory'} />
+          <ExportButton data={exportData} fileName={isEmployee ? `Celestial_My_Assets_${currentUser.employeeId}` : 'Celestial_Asset_Inventory'} />
           {isHR && (
             <>
               <button
@@ -962,10 +962,10 @@ export const AssetManagement: React.FC<AssetManagementProps> = ({ navContext, on
         onClose={() => setIsImportOpen(false)}
         title="Bulk Import Hardware & Digital Assets"
         description="Upload or paste asset inventory rows with unique Asset Tag and Serial Number."
-        templateFileName="Orbyx_Asset_Import_Template"
+        templateFileName="Celestial_Asset_Import_Template"
         headers={['AssetTag', 'Name', 'Category', 'Brand', 'Model', 'SerialNumber', 'PurchaseCost']}
         sampleRows={[
-          ['ORBYX-LAP-099', 'MacBook Pro 14 M3', 'Laptop', 'Apple', 'M3 Pro 18GB', 'C02X9988ZZ', '185000']
+          ['Celestial-LAP-099', 'MacBook Pro 14 M3', 'Laptop', 'Apple', 'M3 Pro 18GB', 'C02X9988ZZ', '185000']
         ]}
         validateRow={(cols, idx) => {
           const [assetTag, name, category, brand, model, serialNumber, purchaseCost] = cols;
@@ -988,7 +988,7 @@ export const AssetManagement: React.FC<AssetManagementProps> = ({ navContext, on
               purchaseDate: '2026-10-01',
               warrantyExpiryDate: '2029-10-01',
               purchaseCost: Number(purchaseCost) || 50000,
-              supplier: 'Orbyx Approved IT Vendor',
+              supplier: 'Celestial Approved IT Vendor',
               location: 'Bengaluru HQ',
               status: 'Available',
               isActive: true,

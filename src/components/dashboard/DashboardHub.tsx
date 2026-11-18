@@ -18,12 +18,13 @@ export const DashboardHub: React.FC<DashboardHubProps> = ({
   onOpenSubmitExpense
 }) => {
   const { currentUser } = useAuth();
+  const roleLower = String(currentUser?.role || '').toLowerCase();
 
-  if (currentUser.role === 'hr_admin') {
+  if (roleLower === 'hr_admin' || roleLower === 'super_admin' || roleLower === 'admin') {
     return <HRDashboard onNavigate={onNavigate} />;
   }
 
-  if (currentUser.role === 'senior_manager' || currentUser.role === 'reporting_manager') {
+  if (roleLower === 'senior_manager' || roleLower === 'reporting_manager') {
     return <ManagerDashboard onNavigate={onNavigate} />;
   }
 

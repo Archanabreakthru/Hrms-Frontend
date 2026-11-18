@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
-import { db } from '../../db/storage';
 import { hrmsService } from '../../services/hrmsService';
 import { useAuth } from '../../services/authContext';
-import { AlertCircle, Calendar, Check, Upload } from 'lucide-react';
+import { attendanceApi } from '../../services/attendanceApi';
+import { LeaveType, LeaveBalance } from '../../types/hrms';
+import { AlertCircle, Calendar, Check, Upload, Loader2 } from 'lucide-react';
 
 interface ApplyLeaveModalProps {
   isOpen: boolean;
@@ -13,9 +14,12 @@ interface ApplyLeaveModalProps {
 
 export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { currentUser } = useAuth();
-  const leaveTypes = db.getLeaveTypes().filter((lt) => lt.isActive !== false);
+  const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
+  const [balances, setBalances] = useState<LeaveBalance[]>([]);
+  const [loadingInitial, setLoadingInitial] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [leaveTypeId, setLeaveTypeId] = useState(leaveTypes[0]?.id || 'LT-AL');
+  const [leaveTypeId, setLeaveTypeId] = useState('LT-AL');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [isHalfDay, setIsHalfDay] = useState(false);
@@ -24,17 +28,55 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({ isOpen, onClos
   const [attachmentName, setAttachmentName] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch active leave types and employee balances from Attendance Service
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    const loadLeaveData = async () => {
+      setLoadingInitial(true);
+      try {
+        const [types, userBalances] = await Promise.all([
+          attendanceApi.listLeaveTypes(),
+          attendanceApi.listLeaveBalances(currentUser.employeeId, new Date().getFullYear()),
+        ]);
+        if (isMounted) {
+          const activeTypes = types.filter((lt) => lt.isActive !== false);
+          setLeaveTypes(activeTypes);
+          setBalances(userBalances);
+          if (activeTypes.length > 0 && !activeTypes.some((t) => t.id === leaveTypeId)) {
+            setLeaveTypeId(activeTypes[0].id);
+          }
+        }
+      } catch (err: any) {
+        console.warn('Failed to load leave types/balances from API, falling back to cached state:', err);
+      } finally {
+        if (isMounted) setLoadingInitial(false);
+      }
+    };
+    loadLeaveData();
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, currentUser.employeeId]);
+
   // Live calculation of working days & balance
   const [calculatedDays, setCalculatedDays] = useState(1);
   const selectedType = leaveTypes.find((lt) => lt.id === leaveTypeId);
-  const currentBalance = hrmsService.getLeaveBalance(currentUser.employeeId, leaveTypeId);
+  const currentBalance = balances.find((b) => b.leaveTypeId === leaveTypeId || b.leaveTypeId === selectedType?.code) || {
+    employeeId: currentUser.employeeId,
+    leaveTypeId,
+    totalEntitled: selectedType?.annualEntitlement || 12,
+    taken: 0,
+    pending: 0,
+    remaining: selectedType?.annualEntitlement || 12,
+  };
 
   useEffect(() => {
     const days = hrmsService.calculateWorkingDays(startDate, endDate, isHalfDay);
     setCalculatedDays(days);
   }, [startDate, endDate, isHalfDay]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -48,28 +90,42 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({ isOpen, onClos
       return;
     }
 
-    const res = hrmsService.applyLeave(
-      {
+    setIsSubmitting(true);
+    try {
+      await attendanceApi.applyLeave({
         employeeId: currentUser.employeeId,
-        leaveTypeId,
+        leaveTypeId: selectedType?.code || leaveTypeId,
         startDate,
         endDate,
         isHalfDay,
-        halfDayPeriod: isHalfDay ? halfDayPeriod : undefined,
+        halfDaySession: isHalfDay ? (halfDayPeriod === 'Second Half' ? 'Second' : 'First') : undefined,
         reason,
-        attachmentName: attachmentName || undefined
-      },
-      currentUser.id,
-      currentUser.name
-    );
+      });
 
-    if (!res.success) {
-      setError(res.error || 'Failed to submit leave application.');
-      return;
+      // Maintain cross-module synchronization for UI
+      hrmsService.applyLeave(
+        {
+          employeeId: currentUser.employeeId,
+          leaveTypeId,
+          startDate,
+          endDate,
+          isHalfDay,
+          halfDayPeriod: isHalfDay ? halfDayPeriod : undefined,
+          reason,
+          attachmentName: attachmentName || undefined,
+        },
+        currentUser.id,
+        currentUser.name
+      );
+
+      onSuccess?.();
+      onClose();
+    } catch (err: any) {
+      console.error('Failed to submit leave application:', err);
+      setError(err?.message || 'Failed to submit leave application to Attendance Service.');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    onSuccess?.();
-    onClose();
   };
 
   return (

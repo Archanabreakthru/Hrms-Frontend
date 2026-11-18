@@ -1,7 +1,7 @@
-// Orbyx HRMS - Client Manager Dedicated Login Screen
+// Celestial HRMS - Client Manager Dedicated Login Screen
 import React, { useState } from 'react';
 import { Building2, Eye, EyeOff, Lock, Mail, ArrowRight, ShieldCheck, Info } from 'lucide-react';
-import { ClientManagerProfile, DEFAULT_CLIENT_MANAGER } from './mockClientData';
+import { ClientManagerProfile } from './mockClientData';
 import { clientAttendanceIntegration } from '../clients/clientAttendanceIntegration';
 
 interface ClientManagerLoginProps {
@@ -13,8 +13,8 @@ export const ClientManagerLogin: React.FC<ClientManagerLoginProps> = ({
   onLoginSuccess,
   onReturnToHRMS
 }) => {
-  const [email, setEmail] = useState<string>('rohit.kumar@acme-tech.example.com');
-  const [password, setPassword] = useState<string>('client@pass2025');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
@@ -54,33 +54,16 @@ export const ClientManagerLogin: React.FC<ClientManagerLoginProps> = ({
           name: matchedSup.name,
           email: matchedSup.officialEmail,
           roleTitle: 'Client Manager',
-          companyName: client?.name || matchedSup.clientName,
+          companyName: client?.name || matchedSup.clientName || 'Client Organization',
           avatarInitials: matchedSup.name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase()
         };
         onLoginSuccess(profile);
       } else {
-        // Fallback for prototype login with entered details
-        const defaultClient = clientAttendanceIntegration.getClients()[0];
-        const profile: ClientManagerProfile = {
-          id: 'CSUP-DEMO',
-          supervisorId: 'CSUP-105',
-          clientId: defaultClient?.id || 'CLI-103',
-          name: cleanEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-          email: cleanEmail,
-          roleTitle: 'Client Manager',
-          companyName: defaultClient?.name || 'Acme Technologies Pvt. Ltd.',
-          avatarInitials: cleanEmail.substring(0, 2).toUpperCase()
-        };
-        onLoginSuccess(profile);
+        setErrorMsg('Invalid credentials. No client supervisor account registered under this email address. Please ensure HR has registered you as a Client Supervisor in Client Management.');
       }
     }, 400);
   };
 
-  const handleUseDemoCredentials = () => {
-    setEmail(DEFAULT_CLIENT_MANAGER.email);
-    setPassword('client@pass2025');
-    setErrorMsg('');
-  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-purple-50/30 to-indigo-50/40 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
@@ -161,18 +144,6 @@ export const ClientManagerLogin: React.FC<ClientManagerLoginProps> = ({
               </div>
             </div>
 
-            {/* Quick Demo Fill Pill */}
-            <div className="pt-1 flex items-center justify-between text-[11px]">
-              <span className="text-slate-500">Prototype Demo Account:</span>
-              <button
-                type="button"
-                onClick={handleUseDemoCredentials}
-                className="text-purple-700 hover:text-purple-800 font-semibold underline underline-offset-2"
-              >
-                Autofill Rohit Kumar (Acme)
-              </button>
-            </div>
-
             {/* Sign in button */}
             <button
               type="submit"
@@ -190,11 +161,11 @@ export const ClientManagerLogin: React.FC<ClientManagerLoginProps> = ({
             </button>
           </form>
 
-          {/* Prototype disclaimer */}
+          {/* Portal Authentication Notice */}
           <div className="mt-5 pt-4 border-t border-slate-100 flex items-start gap-2 text-[11px] text-slate-500 bg-purple-50/50 p-2.5 rounded-lg border border-purple-100/60">
             <Info className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
             <p>
-              This is a separate, dedicated Client Manager portal. Verification actions are performed on local state without affecting internal HR administrator roles.
+              Dedicated Client Manager portal. Sign in with your registered supervisor email address provided by HR Administration.
             </p>
           </div>
 

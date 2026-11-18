@@ -288,7 +288,7 @@ export const PoliciesHub: React.FC<PoliciesHubProps> = ({ initialCategory = 'ALL
                   AcknowledgedAt: r.acknowledgedAt,
                   PriorVersionAcknowledgements: r.priorVersionAcks || 'None'
                 }))}
-                fileName="Orbyx_Policy_Acknowledgement_Report"
+                fileName="Celestial_Policy_Acknowledgement_Report"
                 label="Export Compliance CSV"
               />
             </div>
