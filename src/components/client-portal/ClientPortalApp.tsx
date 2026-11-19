@@ -1,7 +1,7 @@
 // Celestial HRMS - Client Portal Root Container (Revised Specification)
 // Direct flow: Client Manager Login -> One Single Attendance Verification Page
 import React, { useState } from 'react';
-import { ClientManagerProfile, DEFAULT_CLIENT_MANAGER } from './mockClientData';
+import { ClientManagerProfile } from './mockClientData';
 import { ClientManagerLogin } from './ClientManagerLogin';
 import { ClientManagerAttendanceVerification } from './ClientManagerAttendanceVerification';
 

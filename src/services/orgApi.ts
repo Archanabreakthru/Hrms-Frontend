@@ -11,6 +11,7 @@ export interface BackendCompanyProfile {
   panNumber?: string;
   tanNumber?: string;
   gstin?: string;
+  iecNumber?: string;
   pfRegistrationNumber?: string;
   esiRegistrationNumber?: string;
   registeredAddress: string;
@@ -18,6 +19,15 @@ export interface BackendCompanyProfile {
   contactEmail: string;
   contactPhone: string;
   website?: string;
+  incorporatedDate?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  zipCode?: string;
+  currency?: string;
+  currencySymbol?: string;
+  workingDaysPerWeek?: number;
+  standardHoursPerDay?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -264,6 +274,33 @@ export const orgApi = {
       method: 'DELETE',
     });
     return res?.deleted ?? true;
+  },
+
+  async getDelegations(): Promise<any[]> {
+    return apiClient.request<any[]>('/organization/delegations');
+  },
+
+  async createDelegation(data: {
+    delegatorUserId: string;
+    delegatorEmployeeId?: string;
+    delegateUserId: string;
+    delegateEmployeeId?: string;
+    permittedActions: string[];
+    applicableModules?: string[];
+    effectiveFrom: string;
+    effectiveTo: string;
+    reason: string;
+  }): Promise<any> {
+    return apiClient.request<any>('/organization/delegations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async revokeDelegation(id: string): Promise<any> {
+    return apiClient.request<any>(`/organization/delegations/${encodeURIComponent(id)}/revoke`, {
+      method: 'PATCH',
+    });
   },
 };
 

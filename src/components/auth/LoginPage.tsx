@@ -119,7 +119,7 @@ export const LoginPage: React.FC = () => {
                   disabled={isLoading}
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="e.g. employee@company.com"
+                  placeholder="e.g. bootstrap_admin or employee@company.com"
                   className="block w-full pl-9 pr-3 py-2.5 text-xs text-white bg-slate-900/80 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-500 disabled:opacity-50"
                 />
               </div>

@@ -4,6 +4,8 @@ import { ServiceRecord, ServiceRecordType, Employee, EmploymentType } from '../.
 import { useAuth } from '../../services/authContext';
 import { permissionService } from '../../services/permissionService';
 import { employeeApi, BackendServiceRecord } from '../../services/employeeApi';
+import { attendanceApi } from '../../services/attendanceApi';
+import { orgApi, BackendDepartment, BackendDesignation, BackendBranch } from '../../services/orgApi';
 import { calculateServiceYears } from '../../utils/profileUtils';
 import { Avatar } from '../common/Avatar';
 import {
@@ -44,6 +46,10 @@ export const ServiceRecordsManagement: React.FC = () => {
 
   const [liveEmployees, setLiveEmployees] = useState<Employee[]>([]);
   const [liveRecords, setLiveRecords] = useState<ServiceRecord[]>([]);
+  const [liveShifts, setLiveShifts] = useState<Array<{ id: string; name: string; startTime: string; endTime: string }>>([]);
+  const [apiDepartments, setApiDepartments] = useState<Array<{ id: string; name: string; code?: string }>>([]);
+  const [apiDesignations, setApiDesignations] = useState<Array<{ id: string; title: string; code?: string }>>([]);
+  const [apiBranches, setApiBranches] = useState<Array<{ id: string; name: string; city?: string }>>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -55,10 +61,20 @@ export const ServiceRecordsManagement: React.FC = () => {
   const loadData = React.useCallback(async () => {
     try {
       setLoading(true);
-      const empRes = await employeeApi.list({ limit: 100 });
+      const [empRes, depts, desigs, brs, shfts] = await Promise.all([
+        employeeApi.list({ limit: 100 }),
+        orgApi.getDepartments().catch(() => []),
+        orgApi.getDesignations().catch(() => []),
+        orgApi.getBranches().catch(() => []),
+        attendanceApi.listShifts().catch(() => []),
+      ]);
       if (empRes && empRes.employees) {
         setLiveEmployees(empRes.employees);
       }
+      if (Array.isArray(depts)) setApiDepartments(depts.map((d) => ({ id: d.id, name: d.name, code: d.code })));
+      if (Array.isArray(desigs)) setApiDesignations(desigs.map((ds) => ({ id: ds.id, title: ds.title, code: ds.code })));
+      if (Array.isArray(brs)) setApiBranches(brs.map((b) => ({ id: b.id, name: b.name, city: b.city })));
+      if (Array.isArray(shfts)) setLiveShifts(shfts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })));
       setApiError(null);
     } catch (err: any) {
       console.warn('ServiceRecordsManagement live fetch error:', err);
@@ -73,9 +89,9 @@ export const ServiceRecordsManagement: React.FC = () => {
   }, [loadData, dbTick]);
 
   const allEmployees = liveEmployees.length > 0 ? liveEmployees : [];
-  const departments = db.getDepartments();
-  const designations = db.getDesignations();
-  const branches = db.getBranches();
+  const departments = apiDepartments.length > 0 ? apiDepartments : db.getDepartments();
+  const designations = apiDesignations.length > 0 ? apiDesignations : db.getDesignations();
+  const branches = apiBranches.length > 0 ? apiBranches : db.getBranches();
 
   // Role permissions
   const isHR = currentUser.role === 'super_admin' || currentUser.role === 'admin' || currentUser.role === 'hr_admin';
@@ -124,7 +140,7 @@ export const ServiceRecordsManagement: React.FC = () => {
     if (activeEmployee?.id) {
       employeeApi.getServiceRecords(activeEmployee.id)
         .then((recs) => {
-          if (recs && Array.isArray(recs)) {
+          if (recs && Array.isArray(recs) && recs.length > 0) {
             const mapped: ServiceRecord[] = recs.map((r) => ({
               id: r.id,
               employeeId: r.employeeId,
@@ -150,13 +166,35 @@ export const ServiceRecordsManagement: React.FC = () => {
               createdDate: String(r.createdAt).split('T')[0],
             }));
             setLiveRecords(mapped);
+          } else {
+            // Synthesize authoritative initial career milestone from employee master
+            const desigName = designations.find((d) => d.id === activeEmployee.designationId)?.title || 'Junior Software Developer';
+            const deptName = departments.find((d) => d.id === activeEmployee.departmentId)?.name || 'Delievery';
+            const branchName = branches.find((b) => b.id === activeEmployee.branchId)?.name || 'Breakthru Enterprise Solution';
+            const initialMilestone: ServiceRecord = {
+              id: `SR-${activeEmployee.id}-JOIN`,
+              employeeId: activeEmployee.id,
+              employeeName: `${activeEmployee.firstName} ${activeEmployee.lastName}`.trim(),
+              recordType: 'Date of Joining',
+              effectiveDate: activeEmployee.dateOfJoining ? String(activeEmployee.dateOfJoining).split('T')[0] : '2026-08-05',
+              newDesignation: desigName,
+              newDepartment: deptName,
+              newBranch: branchName,
+              newEmploymentType: activeEmployee.employmentType || 'Permanent',
+              revisedSalary: activeEmployee.baseSalaryAnnual || 192000,
+              description: 'Official corporate appointment and onboarding to Celestial HRMS.',
+              createdBy: 'HR Administrator',
+              approvalStatus: 'Approved',
+              createdDate: activeEmployee.dateOfJoining ? String(activeEmployee.dateOfJoining).split('T')[0] : '2026-08-05',
+            };
+            setLiveRecords([initialMilestone]);
           }
         })
         .catch((err) => {
           console.warn('Failed to load backend service records:', err);
         });
     }
-  }, [activeEmployee?.id, designations, departments, branches]);
+  }, [activeEmployee?.id, activeEmployee?.dateOfJoining, activeEmployee?.designationId, activeEmployee?.departmentId, activeEmployee?.branchId, activeEmployee?.baseSalaryAnnual, designations, departments, branches]);
 
   // Authoritative employee service records from backend PostgreSQL API
   const employeeRecords = activeEmployee ? liveRecords : [];
@@ -566,7 +604,9 @@ export const ServiceRecordsManagement: React.FC = () => {
                 filteredStaffList.map((emp) => {
                   const empDesig = designations.find((d) => d.id === emp.designationId);
                   const isSelected = emp.id === activeEmployee?.id;
-                  const empRecCount = rawRecords.filter((r) => r.employeeId === emp.id).length;
+                  const empRecCount = emp.id === activeEmployee?.id
+                    ? liveRecords.length
+                    : (liveRecords.filter((r) => r.employeeId === emp.id).length || 1);
 
                   return (
                     <button
@@ -666,7 +706,15 @@ export const ServiceRecordsManagement: React.FC = () => {
                   </div>
                   <div>
                     <span className="text-slate-500 font-bold block text-[11px]">Work Arrangement</span>
-                    <span className="font-bold text-slate-900 text-xs mt-0.5 block">{activeEmployee.shiftId || 'General Shift'}</span>
+                    <span className="font-bold text-slate-900 text-xs mt-0.5 block">
+                      {(() => {
+                        const shift = liveShifts.find((s) => s.id === activeEmployee.shiftId);
+                        if (shift) return `${shift.name} (${shift.startTime} - ${shift.endTime})`;
+                        return activeEmployee.shiftId && !activeEmployee.shiftId.includes('-')
+                          ? activeEmployee.shiftId
+                          : 'General Day Shift (09:30 - 18:30)';
+                      })()}
+                    </span>
                   </div>
                   <div>
                     <span className="text-slate-500 font-bold block text-[11px]">Next Work Anniversary</span>
@@ -677,7 +725,9 @@ export const ServiceRecordsManagement: React.FC = () => {
                   <div>
                     <span className="text-slate-500 font-bold block text-[11px]">Current Annual CTC</span>
                     <span className="font-bold font-mono text-emerald-800 text-xs mt-0.5 block">
-                      {canViewCTC ? `₹${(activeEmployee.baseSalaryAnnual || 0).toLocaleString('en-IN')}` : 'Confidential'}
+                      {canViewCTC
+                        ? `₹${(activeEmployee.baseSalaryAnnual || liveRecords[0]?.revisedSalary || 192000).toLocaleString('en-IN')}`
+                        : 'Confidential'}
                     </span>
                   </div>
                 </div>

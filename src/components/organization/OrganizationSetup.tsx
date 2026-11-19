@@ -166,12 +166,22 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
           name: backendProf!.tradingName || backendProf!.legalName || '',
           legalEntity: backendProf!.legalName || '',
           registrationNumber: backendProf!.cinNumber || '',
+          incorporatedDate: backendProf!.incorporatedDate ? String(backendProf!.incorporatedDate).split('T')[0] : '',
           taxId: backendProf!.panNumber || '',
           tanNumber: backendProf!.tanNumber || '',
           gstNumber: backendProf!.gstin || '',
+          iecNumber: backendProf!.iecNumber || '',
           pfRegistrationNumber: backendProf!.pfRegistrationNumber || '',
           esiRegistrationNumber: backendProf!.esiRegistrationNumber || '',
           address: backendProf!.headquartersAddress || backendProf!.registeredAddress || '',
+          city: backendProf!.city || '',
+          state: backendProf!.state || '',
+          country: backendProf!.country || 'India',
+          zipCode: backendProf!.zipCode || '',
+          workingDaysPerWeek: backendProf!.workingDaysPerWeek ?? 5,
+          standardHoursPerDay: backendProf!.standardHoursPerDay ?? 8,
+          currency: backendProf!.currency || 'INR',
+          currencySymbol: backendProf!.currencySymbol || '₹',
           contactEmail: backendProf!.contactEmail || '',
           contactPhone: backendProf!.contactPhone || '',
         }));
@@ -214,7 +224,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
       if (backendBranches && Array.isArray(backendBranches)) {
         anyApiSuccess = true;
         const mappedBranches: Branch[] = backendBranches.map((b) => ({
-          id: b.code || b.id,
+          id: b.id || b.code,
           code: b.code,
           name: b.name,
           city: b.city,
@@ -230,7 +240,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
       if (backendDepts && Array.isArray(backendDepts)) {
         anyApiSuccess = true;
         const mappedDepts: Department[] = backendDepts.map((d) => ({
-          id: d.code || d.id,
+          id: d.id || d.code,
           code: d.code,
           name: d.name,
           description: d.description || d.name,
@@ -238,12 +248,15 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
           isActive: d.status === 'Active',
         }));
         setDepartments(mappedDepts);
+        if (mappedDepts.length > 0) {
+          setDesigDeptId((prev) => prev || mappedDepts[0].id);
+        }
       }
 
       if (backendDesigs && Array.isArray(backendDesigs)) {
         anyApiSuccess = true;
         const mappedDesigs: Designation[] = backendDesigs.map((ds) => ({
-          id: ds.code || ds.id,
+          id: ds.id || ds.code,
           code: ds.code,
           title: ds.title,
           departmentId: ds.departmentId || '',
@@ -259,9 +272,11 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
       }
 
       if (!anyApiSuccess && !backendProf && !profileNotConfigured) {
-        // If neither profile nor other endpoints responded and it wasn't a 404 profile unconfigured
-        setIsOffline(true);
-        setOfflineWarning('Backend Organization Service is offline or unreachable. Displaying cached read-only snapshot. Modifications are temporarily restricted.');
+        // Only mark offline if not an authentication/permission failure
+        if (!errorMsg) {
+          setIsOffline(true);
+          setOfflineWarning('Backend Organization Service is offline or unreachable. Displaying cached read-only snapshot. Modifications are temporarily restricted.');
+        }
       } else {
         setIsOffline(false);
       }
@@ -287,6 +302,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
   const [newName, setNewName] = useState('');
   const [newCode, setNewCode] = useState('');
   const [newCity, setNewCity] = useState('');
+  const [newState, setNewState] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [desigDeptId, setDesigDeptId] = useState('');
   const [desigLevel, setDesigLevel] = useState('Mid');
@@ -460,13 +476,23 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
         legalName: payload.legalEntity,
         tradingName: payload.name,
         cinNumber: payload.registrationNumber,
+        incorporatedDate: payload.incorporatedDate,
         panNumber: payload.taxId,
         tanNumber: payload.tanNumber,
         gstin: payload.gstNumber,
+        iecNumber: payload.iecNumber,
         pfRegistrationNumber: payload.pfRegistrationNumber,
         esiRegistrationNumber: payload.esiRegistrationNumber,
         registeredAddress: payload.address,
         headquartersAddress: payload.address,
+        city: payload.city,
+        state: payload.state,
+        country: payload.country || 'India',
+        zipCode: payload.zipCode,
+        workingDaysPerWeek: payload.workingDaysPerWeek,
+        standardHoursPerDay: payload.standardHoursPerDay,
+        currency: payload.currency || 'INR',
+        currencySymbol: payload.currencySymbol || '₹',
         contactEmail: payload.contactEmail || 'corporate@orbyx.internal',
         contactPhone: payload.contactPhone || '+91 80 4092 1000'
       });
@@ -525,20 +551,25 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
     if (!isHR || !newName.trim() || !newCode.trim()) return;
     setErrorMsg('');
     try {
+      const cityClean = newCity.trim() || 'Bengaluru';
+      const stateResolved = newState.trim() || (cityClean.toLowerCase().includes('coimbatore') || cityClean.toLowerCase().includes('chennai') ? 'Tamil Nadu' : 'Karnataka');
       const created = await orgApi.createBranch({
         code: newCode.trim().toUpperCase(),
         name: newName.trim(),
-        city: newCity.trim() || 'Bengaluru',
-        state: 'Karnataka',
+        city: cityClean,
+        state: stateResolved,
         country: 'India',
-        address: `${newCity.trim() || 'Bengaluru'} Office`,
+        address: `${cityClean} Office`,
         isHeadquarters: false
       });
       const newB: Branch = {
-        id: created.code || created.id,
+        id: created.id || created.code,
         code: created.code,
         name: created.name,
         city: created.city,
+        state: created.state,
+        country: created.country,
+        address: created.address,
         isHeadquarters: created.isHeadquarters,
         isActive: created.status === 'Active',
       };
@@ -546,6 +577,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
       setNewName('');
       setNewCode('');
       setNewCity('');
+      setNewState('');
       notify('Branch added successfully.');
     } catch (err: any) {
       console.error('Failed to create branch:', err);
@@ -1587,7 +1619,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
             Each branch is a separate organizational record.
           </p>
           {isHR && (
-            <div className="mb-5 grid gap-2 md:grid-cols-[1fr_140px_160px_auto]">
+            <div className="mb-5 grid gap-2 md:grid-cols-[1fr_120px_140px_140px_auto]">
               <input
                 className={inputClass}
                 placeholder="Branch / office name"
@@ -1602,9 +1634,15 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
               />
               <input
                 className={inputClass}
-                placeholder="City"
+                placeholder="City (e.g. Coimbatore)"
                 value={newCity}
                 onChange={(e) => setNewCity(e.target.value)}
+              />
+              <input
+                className={inputClass}
+                placeholder="State (e.g. Tamil Nadu)"
+                value={newState}
+                onChange={(e) => setNewState(e.target.value)}
               />
               <button
                 onClick={addBranch}
@@ -1634,7 +1672,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                     <tr key={b.id} className="border-b last:border-0">
                       <td className="p-3 font-semibold">{b.name}</td>
                       <td className="p-3 font-mono text-xs">{b.code}</td>
-                      <td className="p-3">{b.city || 'Not specified'}</td>
+                      <td className="p-3">{b.city ? `${b.city}${b.state ? `, ${b.state}` : ''}` : 'Not specified'}</td>
                       <td className="p-3">{b.isHeadquarters ? 'Headquarters' : 'Branch'}</td>
                       <td className="p-3">
                         <span
@@ -1842,7 +1880,7 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                       <td className="p-3 font-semibold">{d.title}</td>
                       <td className="p-3 font-mono text-xs">{d.code}</td>
                       <td className="p-3">
-                        {departments.find((x) => x.id === d.departmentId)?.name || 'Unassigned'}
+                        {departments.find((x) => x.id === d.departmentId || x.code === d.departmentId)?.name || 'Unassigned'}
                       </td>
                       <td className="p-3">{d.level}</td>
                       <td className="p-3">
@@ -2010,6 +2048,14 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                 onChange={(e) => setEditingBranch({ ...editingBranch, city: e.target.value })}
               />
             </label>
+            <label className="block">
+              <span className={labelClass}>State</span>
+              <input
+                className={inputClass}
+                value={editingBranch.state || ''}
+                onChange={(e) => setEditingBranch({ ...editingBranch, state: e.target.value })}
+              />
+            </label>
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button onClick={() => setEditingBranch(null)} className="px-3 py-1.5 border rounded-lg">Cancel</button>
               <button
@@ -2019,9 +2065,10 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                     const updated = await orgApi.updateBranch(editingBranch.id, {
                       name: editingBranch.name,
                       city: editingBranch.city,
+                      state: editingBranch.state,
                     });
                     setBranches((prev) =>
-                      prev.map((b) => (b.id === editingBranch.id ? { ...b, name: updated.name, city: updated.city } : b))
+                      prev.map((b) => (b.id === editingBranch.id ? { ...b, name: updated.name, city: updated.city, state: updated.state } : b))
                     );
                     setEditingBranch(null);
                     notify('Branch updated successfully.');
@@ -2120,6 +2167,21 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
               />
             </label>
             <label className="block">
+              <span className={labelClass}>Department</span>
+              <select
+                className={inputClass}
+                value={editingDesig.departmentId || ''}
+                onChange={(e) => setEditingDesig({ ...editingDesig, departmentId: e.target.value })}
+              >
+                <option value="">Unassigned (None)</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} ({d.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
               <span className={labelClass}>Level</span>
               <select
                 className={inputClass}
@@ -2142,10 +2204,11 @@ export const OrganizationSetup: React.FC<OrganizationSetupProps> = ({ onOpenPoli
                   try {
                     const updated = await orgApi.updateDesignation(editingDesig.id, {
                       title: editingDesig.title,
+                      departmentId: editingDesig.departmentId || undefined,
                       level: parseInt(editingDesig.level, 10) || 1,
                     });
                     setDesignations((prev) =>
-                      prev.map((ds) => (ds.id === editingDesig.id ? { ...ds, title: updated.title, level: String(updated.level) } : ds))
+                      prev.map((ds) => (ds.id === editingDesig.id ? { ...ds, title: updated.title, departmentId: updated.departmentId || '', level: String(updated.level) } : ds))
                     );
                     setEditingDesig(null);
                     notify('Designation updated successfully.');

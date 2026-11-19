@@ -552,6 +552,11 @@ export const db = {
     setItem('employees', list);
   },
 
+  deleteEmployee(id: string): void {
+    const list = this.getEmployees().filter((e) => e.id !== id);
+    setItem('employees', list);
+  },
+
   // Service Records
   getServiceRecords(): ServiceRecord[] {
     return getItem<ServiceRecord[]>('serviceRecords', initialServiceRecords);

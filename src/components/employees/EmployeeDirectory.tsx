@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, subscribeToDB } from '../../db/storage';
+import { db } from '../../db/storage';
 import {
   Employee,
   BasicDirectoryEmployee,
@@ -25,6 +25,7 @@ import { OrgChart } from './OrgChart';
 import { ServiceRecordsManagement } from '../services/ServiceRecordsManagement';
 import { hrmsService } from '../../services/hrmsService';
 import { employeeApi } from '../../services/employeeApi';
+import { attendanceApi } from '../../services/attendanceApi';
 import { authApi } from '../../services/authApi';
 import { orgApi, BackendBranch, BackendDepartment, BackendDesignation } from '../../services/orgApi';
 import { Celestial_ACCESS_TOKEN_KEY } from '../../services/authContext';
@@ -91,47 +92,51 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     if (navContext?.subTab === 'service_records' || navContext?.subTab === 'service-records') return 'service_records';
     if (navContext?.subTab === 'directory') return 'directory';
     if (navContext?.subTab === 'hierarchy') return 'hierarchy';
-    return isRegularEmployee ? 'directory' : 'reportees';
+    if (navContext?.subTab === 'reportees') return 'reportees';
+    return 'directory';
   });
   const [reporteeManagerFilter, setReporteeManagerFilter] = useState<string>(() => {
     if (navContext?.managerId) return navContext.managerId;
     return currentUser.role === 'hr_admin' ? 'ALL_REPORTEES' : currentUser.employeeId;
   });
-  const [tick, setTick] = useState(0);
-
   const [remoteEmployees, setRemoteEmployees] = useState<Employee[]>([]);
   const [loadingRemote, setLoadingRemote] = useState<boolean>(true);
   const [remoteError, setRemoteError] = useState<string | null>(null);
 
+  // Employee Deletion States
+  const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   // Live master data states fetched from Organization Service API
-  const [apiBranches, setApiBranches] = useState<Array<{ id: string; name: string; city: string }>>([]);
-  const [apiDepartments, setApiDepartments] = useState<Array<{ id: string; name: string }>>([]);
-  const [apiDesignations, setApiDesignations] = useState<Array<{ id: string; title: string }>>([]);
+  const [apiBranches, setApiBranches] = useState<Array<{ id: string; code?: string; name: string; city: string }>>([]);
+  const [apiDepartments, setApiDepartments] = useState<Array<{ id: string; code?: string; name: string }>>([]);
+  const [apiDesignations, setApiDesignations] = useState<Array<{ id: string; code?: string; title: string; level?: string | number }>>([]);
+  const [apiShifts, setApiShifts] = useState<Array<{ id: string; name: string; startTime: string; endTime: string }>>([]);
 
-  // Subscribe to storage changes for real-time reactivity
-  useEffect(() => {
-    return subscribeToDB(() => setTick((t) => t + 1));
-  }, []);
-
-  // Fetch live master data (departments, designations, branches) from orgApi
+  // Fetch live master data (departments, designations, branches, shifts) from authoritative APIs
   useEffect(() => {
     let isMounted = true;
     async function loadMasterData() {
       try {
-        const [depts, desigs, brs] = await Promise.all([
+        const [depts, desigs, brs, shfts] = await Promise.all([
           orgApi.getDepartments().catch(() => []),
           orgApi.getDesignations().catch(() => []),
           orgApi.getBranches().catch(() => []),
+          attendanceApi.listShifts().catch(() => []),
         ]);
         if (isMounted) {
           if (Array.isArray(depts)) {
-            setApiDepartments(depts.map((d) => ({ id: d.code || d.id, name: d.name })));
+            setApiDepartments(depts.map((d) => ({ id: d.id, code: d.code, name: d.name })));
           }
           if (Array.isArray(desigs)) {
-            setApiDesignations(desigs.map((ds) => ({ id: ds.code || ds.id, title: ds.title })));
+            setApiDesignations(desigs.map((ds) => ({ id: ds.id, code: ds.code, title: ds.title, level: ds.level })));
           }
           if (Array.isArray(brs)) {
-            setApiBranches(brs.map((b) => ({ id: b.code || b.id, name: b.name, city: b.city })));
+            setApiBranches(brs.map((b) => ({ id: b.id, code: b.code, name: b.name, city: b.city })));
+          }
+          if (Array.isArray(shfts)) {
+            setApiShifts(shfts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })));
           }
         }
       } catch (err) {
@@ -161,9 +166,31 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     }
   }, []);
 
+  const handleConfirmDelete = async () => {
+    if (!employeeToDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      // 1. Authoritative backend deletion in PostgreSQL
+      await employeeApi.delete(employeeToDelete.id);
+      // 2. Synchronize local store
+      hrmsService.deleteEmployee(employeeToDelete.id, currentUser.id, currentUser.name);
+      // 3. Refresh live employee directory
+      await fetchLiveEmployees();
+      setEmployeeToDelete(null);
+      setNotice(`Employee ${employeeToDelete.firstName} ${employeeToDelete.lastName} (${employeeToDelete.id}) permanently deleted.`);
+      setTimeout(() => setNotice(''), 4000);
+    } catch (err: any) {
+      console.error('Failed to delete employee:', err);
+      setDeleteError(err?.message || 'Failed to delete employee record from database.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   useEffect(() => {
     fetchLiveEmployees();
-  }, [fetchLiveEmployees, tick]);
+  }, [fetchLiveEmployees]);
 
   useEffect(() => {
     if (navContext?.subTab === 'reportees') {
@@ -191,7 +218,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       );
     }
     if (!navContext?.subTab) {
-      setViewMode(currentUser.role === 'employee' ? 'directory' : 'reportees');
+      setViewMode('directory');
     }
   }, [currentUser.employeeId, currentUser.role, navContext]);
 
@@ -557,20 +584,62 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     }
     setEditError('');
     try {
-      if (editingEmployee.reportingManagerId) {
-        await employeeApi.updateReporting(editingEmployee.id, editingEmployee.reportingManagerId);
-      }
+      // 1. Personal contact details
+      await employeeApi.updatePersonal(editingEmployee.id, {
+        personalEmail: editingEmployee.personalEmail || undefined,
+        personalPhone: editingEmployee.personalPhone || undefined,
+        currentAddress: editingEmployee.currentAddress || editingEmployee.address || undefined,
+        permanentAddress: editingEmployee.permanentAddress || editingEmployee.address || undefined,
+        bloodGroup: editingEmployee.bloodGroup || undefined,
+        maritalStatus: (['Single', 'Married', 'Other'].includes(editingEmployee.maritalStatus as string) ? editingEmployee.maritalStatus : undefined) as any,
+        emergencyContact: editingEmployee.emergencyContact?.name ? {
+          name: editingEmployee.emergencyContact.name,
+          relationship: editingEmployee.emergencyContact.relationship || 'Family',
+          phone: editingEmployee.emergencyContact.phone || editingEmployee.officialPhone || editingEmployee.phone || '+91 0000000000',
+        } : undefined,
+      }).catch((e) => console.warn('updatePersonal warning:', e));
+
+      // 2. Employment details
       await employeeApi.updateEmployment(editingEmployee.id, {
-        departmentId: editingEmployee.departmentId,
-        designationId: editingEmployee.designationId,
-        branchId: editingEmployee.branchId,
+        departmentId: editingEmployee.departmentId || undefined,
+        designationId: editingEmployee.designationId || undefined,
+        branchId: editingEmployee.branchId || undefined,
         employmentType: editingEmployee.employmentType,
-        status: editingEmployee.status,
-      });
-      fetchLiveEmployees();
+        status: (editingEmployee.status ? (editingEmployee.status as string).replace(/\s+/g, '_') : 'Active') as any,
+        noticePeriodDays: typeof editingEmployee.noticePeriodDays === 'number' ? editingEmployee.noticePeriodDays : undefined,
+        probationPeriodDays: typeof editingEmployee.probationPeriodDays === 'number' ? editingEmployee.probationPeriodDays : undefined,
+        confirmationDate: editingEmployee.confirmationDate ? editingEmployee.confirmationDate.split('T')[0] : undefined,
+        shiftId: editingEmployee.shiftId || undefined,
+      }).catch((e) => console.warn('updateEmployment warning:', e));
+
+      // 3. Reporting manager
+      if (editingEmployee.reportingManagerId) {
+        await employeeApi.updateReporting(editingEmployee.id, editingEmployee.reportingManagerId).catch((e) => console.warn('updateReporting warning:', e));
+      }
+
+      // 4. Salary and banking
+      if (editingEmployee.bankDetails?.accountNumber || editingEmployee.panOrTaxNumber || editingEmployee.baseSalaryAnnual) {
+        await employeeApi.updateSalaryBank(editingEmployee.id, {
+          bankDetails: editingEmployee.bankDetails?.accountNumber ? {
+            accountNumber: editingEmployee.bankDetails.accountNumber,
+            ifscCode: editingEmployee.bankDetails.ifscOrRouting || 'UNKNOWN',
+            bankName: editingEmployee.bankDetails.bankName || 'Bank',
+          } : undefined,
+          panOrTaxNumber: editingEmployee.panOrTaxNumber || undefined,
+          pfUan: editingEmployee.pfUan || undefined,
+          esiNumber: editingEmployee.esiNumber || undefined,
+          baseSalaryAnnual: Number(editingEmployee.baseSalaryAnnual) || 0,
+          salaryStructureId: editingEmployee.salaryStructureId || undefined,
+          epfApplicable: editingEmployee.epfApplicable,
+          esiApplicable: editingEmployee.esiApplicable,
+        }).catch((e) => console.warn('updateSalaryBank warning:', e));
+      }
+
+      await fetchLiveEmployees();
     } catch (err: any) {
       console.warn('Backend update failed during employee edit:', err);
     }
+    db.saveEmployee(editingEmployee);
     hrmsService.updateEmployee(editingEmployee, currentUser.id, currentUser.name);
     setNotice(`Saved changes to ${editingEmployee.firstName} ${editingEmployee.lastName} (${editingEmployee.id}).`);
     setEditingEmployee(null);
@@ -646,7 +715,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         sortable: true,
         cell: (r: any) => {
           const isDirectReport = r.isDirectReport;
-          const desig = designations.find((d) => d.id === r.designationId);
+          const desig = designations.find((d) => d.id === r.designationId || (d.code && d.code === r.designationId));
           return (
             <div className="flex items-center gap-3">
               <Avatar
@@ -717,7 +786,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         accessorKey: 'firstName',
         sortable: true,
         cell: (emp: Employee) => {
-          const desig = designations.find((d) => d.id === emp.designationId);
+          const desig = designations.find((d) => d.id === emp.designationId || (d.code && d.code === emp.designationId));
           const isClientDeployed = deployedEmpIds.has(emp.id);
           return (
             <div className="flex items-center gap-3">
@@ -751,12 +820,12 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         accessorKey: 'departmentId',
         sortable: true,
         cell: (emp: Employee) => {
-          const dept = departments.find((d) => d.id === emp.departmentId);
-          const br = branches.find((b) => b.id === emp.branchId);
+          const dept = departments.find((d) => d.id === emp.departmentId || (d.code && d.code === emp.departmentId));
+          const br = branches.find((b) => b.id === emp.branchId || (b.code && b.code === emp.branchId));
           return (
             <div>
               <span className="font-medium text-slate-800 block">{dept?.name || (emp.departmentId ? emp.departmentId : '—')}</span>
-              <span className="text-[11px] text-slate-400">{br ? br.city : '—'}</span>
+              <span className="text-[11px] text-slate-400">{br ? (br.city ? `${br.name} (${br.city})` : br.name) : '—'}</span>
             </div>
           );
         }
@@ -843,7 +912,17 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               {isHR && (
                 <>
                   <button
-                    onClick={() => setEditingEmployee({ ...emp })}
+                    onClick={async () => {
+                      setEditingEmployee({ ...emp });
+                      try {
+                        const full = await employeeApi.getById(emp.id);
+                        if (full) {
+                          setEditingEmployee(full);
+                        }
+                      } catch {
+                        // Keep current emp fallback
+                      }
+                    }}
                     className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
                   >
                     <Edit3 className="h-3 w-3" />
@@ -870,6 +949,15 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   >
                     <Power className="h-3 w-3" />
                     <span>{emp.status === 'Inactive' ? 'Activate' : 'Deactivate'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEmployeeToDelete(emp)}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg transition-colors cursor-pointer text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200"
+                    title="Permanently Delete Employee"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>Delete</span>
                   </button>
                 </>
               )}
@@ -1044,8 +1132,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {directReportees.map((rep) => {
-                const dept = departments.find((d) => d.id === rep.departmentId);
-                const desig = designations.find((d) => d.id === rep.designationId);
+                const dept = departments.find((d) => d.id === rep.departmentId || (d.code && d.code === rep.departmentId));
+                const desig = designations.find((d) => d.id === rep.designationId || (d.code && d.code === rep.designationId));
                 const isClientDeployed = deployedEmpIds.has(rep.id);
                 return (
                   <div
@@ -1235,9 +1323,12 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
 
       {/* Profile Modal with Role-Based Scoped Rendering */}
       <EmployeeProfileModal
-        employee={selectedEmployee ? db.getEmployeeById(selectedEmployee.id) || selectedEmployee : null}
+        employee={selectedEmployee ? (allEmployees.find((e) => e.id === selectedEmployee.id) || db.getEmployeeById(selectedEmployee.id) || selectedEmployee) : null}
         isOpen={!!selectedEmployee}
         onClose={() => setSelectedEmployee(null)}
+        departments={departments}
+        designations={designations}
+        branches={branches}
       />
 
       {/* Edit Employee Modal - Comprehensive Multi-Section / Tabbed Form */}
@@ -1407,8 +1498,8 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Personal Mobile</label>
                     <input
-                      value={editingEmployee.personalPhone || ''}
-                      onChange={(e) => setEditingEmployee({ ...editingEmployee, personalPhone: e.target.value })}
+                      value={editingEmployee.personalPhone || (editingEmployee as any).personalMobile || ''}
+                      onChange={(e) => setEditingEmployee({ ...editingEmployee, personalPhone: e.target.value, personalMobile: e.target.value } as any)}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     />
                   </div>
@@ -1416,7 +1507,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <label className="block text-slate-600 font-semibold mb-1">Date of Birth</label>
                     <input
                       type="date"
-                      value={editingEmployee.dateOfBirth || ''}
+                      value={editingEmployee.dateOfBirth ? String(editingEmployee.dateOfBirth).split('T')[0] : ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, dateOfBirth: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     />
@@ -1424,10 +1515,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Gender</label>
                     <select
-                      value={editingEmployee.gender || 'Male'}
+                      value={editingEmployee.gender || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, gender: e.target.value as any })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Gender</option>
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
                       <option value="Other">Other</option>
@@ -1436,10 +1528,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Blood Group</label>
                     <select
-                      value={editingEmployee.bloodGroup || 'O+'}
+                      value={editingEmployee.bloodGroup || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, bloodGroup: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Blood Group</option>
                       <option value="A+">A+</option>
                       <option value="A-">A-</option>
                       <option value="B+">B+</option>
@@ -1453,10 +1546,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Marital Status</label>
                     <select
-                      value={editingEmployee.maritalStatus || 'Single'}
+                      value={editingEmployee.maritalStatus || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, maritalStatus: e.target.value as any })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Marital Status</option>
                       <option value="Single">Single</option>
                       <option value="Married">Married</option>
                       <option value="Other">Other</option>
@@ -1492,16 +1586,17 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <div>
                       <label className="block text-[11px] text-slate-500 mb-0.5">Contact Name</label>
                       <input
-                        value={editingEmployee.emergencyContact?.name || ''}
+                        value={editingEmployee.emergencyContact?.name || (editingEmployee as any).emergencyContactName || ''}
                         onChange={(e) =>
                           setEditingEmployee({
                             ...editingEmployee,
+                            emergencyContactName: e.target.value,
                             emergencyContact: {
                               name: e.target.value,
-                              relationship: editingEmployee.emergencyContact?.relationship || 'Family',
-                              phone: editingEmployee.emergencyContact?.phone || ''
+                              relationship: editingEmployee.emergencyContact?.relationship || (editingEmployee as any).emergencyContactRelationship || '',
+                              phone: editingEmployee.emergencyContact?.phone || (editingEmployee as any).emergencyContactPhone || ''
                             }
-                          })
+                          } as any)
                         }
                         className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded"
                       />
@@ -1509,16 +1604,17 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <div>
                       <label className="block text-[11px] text-slate-500 mb-0.5">Relationship</label>
                       <input
-                        value={editingEmployee.emergencyContact?.relationship || ''}
+                        value={editingEmployee.emergencyContact?.relationship || (editingEmployee as any).emergencyContactRelationship || ''}
                         onChange={(e) =>
                           setEditingEmployee({
                             ...editingEmployee,
+                            emergencyContactRelationship: e.target.value,
                             emergencyContact: {
-                              name: editingEmployee.emergencyContact?.name || '',
+                              name: editingEmployee.emergencyContact?.name || (editingEmployee as any).emergencyContactName || '',
                               relationship: e.target.value,
-                              phone: editingEmployee.emergencyContact?.phone || ''
+                              phone: editingEmployee.emergencyContact?.phone || (editingEmployee as any).emergencyContactPhone || ''
                             }
-                          })
+                          } as any)
                         }
                         className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded"
                       />
@@ -1526,16 +1622,17 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <div>
                       <label className="block text-[11px] text-slate-500 mb-0.5">Phone Number</label>
                       <input
-                        value={editingEmployee.emergencyContact?.phone || ''}
+                        value={editingEmployee.emergencyContact?.phone || (editingEmployee as any).emergencyContactPhone || ''}
                         onChange={(e) =>
                           setEditingEmployee({
                             ...editingEmployee,
+                            emergencyContactPhone: e.target.value,
                             emergencyContact: {
-                              name: editingEmployee.emergencyContact?.name || '',
-                              relationship: editingEmployee.emergencyContact?.relationship || 'Family',
+                              name: editingEmployee.emergencyContact?.name || (editingEmployee as any).emergencyContactName || '',
+                              relationship: editingEmployee.emergencyContact?.relationship || (editingEmployee as any).emergencyContactRelationship || '',
                               phone: e.target.value
                             }
-                          })
+                          } as any)
                         }
                         className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded"
                       />
@@ -1580,7 +1677,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <label className="block text-slate-600 font-semibold mb-1">Date of Joining</label>
                     <input
                       type="date"
-                      value={editingEmployee.dateOfJoining || ''}
+                      value={editingEmployee.dateOfJoining ? String(editingEmployee.dateOfJoining).split('T')[0] : ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, dateOfJoining: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono"
                     />
@@ -1589,7 +1686,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <label className="block text-slate-600 font-semibold mb-1">Confirmation Date</label>
                     <input
                       type="date"
-                      value={editingEmployee.confirmationDate || ''}
+                      value={editingEmployee.confirmationDate ? String(editingEmployee.confirmationDate).split('T')[0] : ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, confirmationDate: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono"
                     />
@@ -1598,8 +1695,9 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <label className="block text-slate-600 font-semibold mb-1">Notice Period (Days)</label>
                     <input
                       type="number"
-                      value={editingEmployee.noticePeriodDays || 60}
-                      onChange={(e) => setEditingEmployee({ ...editingEmployee, noticePeriodDays: Number(e.target.value) })}
+                      value={editingEmployee.noticePeriodDays ?? ''}
+                      onChange={(e) => setEditingEmployee({ ...editingEmployee, noticePeriodDays: e.target.value ? Number(e.target.value) : undefined })}
+                      placeholder="e.g. 60"
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     />
                   </div>
@@ -1607,19 +1705,21 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <label className="block text-slate-600 font-semibold mb-1">Probation Period (Days)</label>
                     <input
                       type="number"
-                      value={editingEmployee.probationPeriodDays || 180}
-                      onChange={(e) => setEditingEmployee({ ...editingEmployee, probationPeriodDays: Number(e.target.value) })}
+                      value={editingEmployee.probationPeriodDays ?? ''}
+                      onChange={(e) => setEditingEmployee({ ...editingEmployee, probationPeriodDays: e.target.value ? Number(e.target.value) : undefined })}
+                      placeholder="e.g. 180"
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     />
                   </div>
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Shift</label>
                     <select
-                      value={editingEmployee.shiftId || 'SHIFT-GEN'}
+                      value={editingEmployee.shiftId || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, shiftId: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
-                      {db.getShifts().map((s) => (
+                      <option value="">Select Shift</option>
+                      {(apiShifts.length > 0 ? apiShifts : db.getShifts()).map((s) => (
                         <option key={s.id} value={s.id}>{s.name} ({s.startTime} - {s.endTime})</option>
                       ))}
                     </select>
@@ -1627,8 +1727,9 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Employee Category</label>
                     <input
-                      value={editingEmployee.employeeCategory || 'Core Staff'}
+                      value={editingEmployee.employeeCategory || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, employeeCategory: e.target.value })}
+                      placeholder="e.g. Core Staff"
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     />
                   </div>
@@ -1643,10 +1744,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Department</label>
                     <select
-                      value={editingEmployee.departmentId}
+                      value={editingEmployee.departmentId || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, departmentId: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Department</option>
                       {departments.map((d) => (
                         <option key={d.id} value={d.id}>{d.name}</option>
                       ))}
@@ -1655,10 +1757,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Designation</label>
                     <select
-                      value={editingEmployee.designationId}
+                      value={editingEmployee.designationId || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, designationId: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Designation</option>
                       {designations.map((d) => (
                         <option key={d.id} value={d.id}>{d.title}</option>
                       ))}
@@ -1667,10 +1770,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Branch / Location</label>
                     <select
-                      value={editingEmployee.branchId}
+                      value={editingEmployee.branchId || ''}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, branchId: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Branch</option>
                       {branches.map((b) => (
                         <option key={b.id} value={b.id}>{b.name} ({b.city})</option>
                       ))}
@@ -1710,8 +1814,9 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                     <input
                       type="number"
                       min={0}
-                      value={editingEmployee.baseSalaryAnnual || 0}
-                      onChange={(e) => setEditingEmployee({ ...editingEmployee, baseSalaryAnnual: Number(e.target.value) })}
+                      value={editingEmployee.baseSalaryAnnual || ''}
+                      onChange={(e) => setEditingEmployee({ ...editingEmployee, baseSalaryAnnual: Number(e.target.value) || 0 })}
+                      placeholder="e.g. 1200000"
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono"
                     />
                   </div>
@@ -1722,6 +1827,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, salaryStructureId: e.target.value })}
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Salary Structure</option>
                       {db.getSalaryStructures().map((s) => (
                         <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
                       ))}
@@ -1730,17 +1836,19 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Bank Name</label>
                     <input
-                      value={editingEmployee.bankDetails?.bankName || ''}
+                      value={editingEmployee.bankDetails?.bankName || (editingEmployee as any).bankName || ''}
+                      placeholder="e.g. HDFC Bank"
                       onChange={(e) =>
                         setEditingEmployee({
                           ...editingEmployee,
+                          bankName: e.target.value,
                           bankDetails: {
                             bankName: e.target.value,
-                            accountNumber: editingEmployee.bankDetails?.accountNumber || '',
-                            ifscOrRouting: editingEmployee.bankDetails?.ifscOrRouting || '',
-                            accountType: editingEmployee.bankDetails?.accountType || 'Savings'
+                            accountNumber: editingEmployee.bankDetails?.accountNumber || (editingEmployee as any).accountNumber || '',
+                            ifscOrRouting: editingEmployee.bankDetails?.ifscOrRouting || (editingEmployee as any).ifscCode || '',
+                            accountType: (editingEmployee.bankDetails?.accountType as any) || ''
                           }
-                        })
+                        } as any)
                       }
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     />
@@ -1748,17 +1856,20 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Bank Account Number</label>
                     <input
-                      value={editingEmployee.bankDetails?.accountNumber || ''}
+                      value={editingEmployee.bankDetails?.accountNumber || (editingEmployee as any).accountNumber || (editingEmployee as any).bankAccountNumber || ''}
+                      placeholder="e.g. 50100234567890"
                       onChange={(e) =>
                         setEditingEmployee({
                           ...editingEmployee,
+                          accountNumber: e.target.value,
+                          bankAccountNumber: e.target.value,
                           bankDetails: {
-                            bankName: editingEmployee.bankDetails?.bankName || '',
+                            bankName: editingEmployee.bankDetails?.bankName || (editingEmployee as any).bankName || '',
                             accountNumber: e.target.value,
-                            ifscOrRouting: editingEmployee.bankDetails?.ifscOrRouting || '',
-                            accountType: editingEmployee.bankDetails?.accountType || 'Savings'
+                            ifscOrRouting: editingEmployee.bankDetails?.ifscOrRouting || (editingEmployee as any).ifscCode || '',
+                            accountType: (editingEmployee.bankDetails?.accountType as any) || ''
                           }
-                        })
+                        } as any)
                       }
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono"
                     />
@@ -1766,17 +1877,20 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">IFSC Code</label>
                     <input
-                      value={editingEmployee.bankDetails?.ifscOrRouting || ''}
+                      value={editingEmployee.bankDetails?.ifscOrRouting || (editingEmployee.bankDetails as any)?.ifscCode || (editingEmployee as any).ifscCode || (editingEmployee as any).bankIfscCode || ''}
+                      placeholder="e.g. HDFC0001234"
                       onChange={(e) =>
                         setEditingEmployee({
                           ...editingEmployee,
+                          ifscCode: e.target.value.toUpperCase(),
+                          bankIfscCode: e.target.value.toUpperCase(),
                           bankDetails: {
-                            bankName: editingEmployee.bankDetails?.bankName || '',
-                            accountNumber: editingEmployee.bankDetails?.accountNumber || '',
+                            bankName: editingEmployee.bankDetails?.bankName || (editingEmployee as any).bankName || '',
+                            accountNumber: editingEmployee.bankDetails?.accountNumber || (editingEmployee as any).accountNumber || '',
                             ifscOrRouting: e.target.value.toUpperCase(),
-                            accountType: editingEmployee.bankDetails?.accountType || 'Savings'
+                            accountType: (editingEmployee.bankDetails?.accountType as any) || ''
                           }
-                        })
+                        } as any)
                       }
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono"
                     />
@@ -1784,7 +1898,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                   <div>
                     <label className="block text-slate-600 font-semibold mb-1">Account Type</label>
                     <select
-                      value={editingEmployee.bankDetails?.accountType || 'Savings'}
+                      value={editingEmployee.bankDetails?.accountType || ''}
                       onChange={(e) =>
                         setEditingEmployee({
                           ...editingEmployee,
@@ -1798,6 +1912,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
                       }
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                     >
+                      <option value="">Select Account Type</option>
                       <option value="Savings">Savings</option>
                       <option value="Current">Current</option>
                     </select>
@@ -2847,7 +2962,12 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       <NewEmployeeModal
         isOpen={isNewModalOpen}
         onClose={() => setIsNewModalOpen(false)}
-        onCreated={(newEmp) => setSelectedEmployee(newEmp)}
+        onCreated={async (newEmp) => {
+          await fetchLiveEmployees();
+          setViewMode('directory');
+          setNotice(`Employee ${newEmp.firstName} ${newEmp.lastName} (${newEmp.id}) ${newEmp.profileStatus === 'Draft' ? 'draft saved' : 'enrolled successfully'}.`);
+          setTimeout(() => setNotice(''), 4000);
+        }}
       />
 
       {/* Validated CSV Import Modal */}
@@ -2882,10 +3002,10 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
               firstName,
               lastName,
               email,
-              phone: phone || '+91 98450 00000',
-              deptId: deptId || 'DEP-ENG',
-              desigId: desigId || 'DES-SWE',
-              salary: Number(salaryStr) || 1200000
+              phone: phone || '',
+              deptId: deptId || '',
+              desigId: desigId || '',
+              salary: Number(salaryStr) || 0
             }
           };
         }}
@@ -2942,6 +3062,61 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
           setNotice(`Successfully imported ${validRows.length} employee(s).`);
         }}
       />
+
+      {/* Delete Confirmation Modal */}
+      {employeeToDelete && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Delete Employee Record</h3>
+                <p className="text-xs text-slate-500">This action is permanent and cannot be undone.</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-rose-50/70 rounded-xl border border-rose-100 text-xs text-rose-900 space-y-1">
+              <p className="font-semibold">
+                Are you sure you want to delete <span className="underline font-bold">{employeeToDelete.firstName} {employeeToDelete.lastName}</span> ({employeeToDelete.id})?
+              </p>
+              <p className="text-[11px] text-rose-700">
+                All associated employment history, provisioning outbox entries, and service records in PostgreSQL will be permanently removed.
+              </p>
+            </div>
+
+            {deleteError && (
+              <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => {
+                  setEmployeeToDelete(null);
+                  setDeleteError(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-lg shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{isDeleting ? 'Deleting...' : 'Permanently Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
