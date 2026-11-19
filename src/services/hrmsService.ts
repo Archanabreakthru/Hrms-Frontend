@@ -30,18 +30,21 @@ export const hrmsService = {
    * Derives standardized designation code for employee ID generation.
    * Format: EMP-[DESIGNATION CODE]-[SEQUENCE] (e.g. EMP-MD-0001, EMP-SWE-0002, EMP-HRM-0003)
    */
-  getDesignationCode(designationId?: string): string {
+  getDesignationCode(designationId?: string, customDesignations?: Array<{ id: string; title: string; code?: string }>): string {
     if (!designationId) return 'GEN';
-    const desigs = db.getDesignations();
+    const desigs = customDesignations && customDesignations.length > 0 ? customDesignations : db.getDesignations();
     const found = desigs.find((d) => d.id === designationId);
     if (!found) {
-      // Derive from ID if pattern matches
+      // If it looks like a UUID, do not extract hex letters
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(designationId)) {
+        return 'GEN';
+      }
       const fromId = designationId.replace('DES-', '').replace(/[^A-Za-z]/g, '').toUpperCase();
       return fromId.slice(0, 4) || 'GEN';
     }
     // Clean up code like 'MD-01' -> 'MD', 'SDM-01' -> 'SDM', 'SWE-I' -> 'SWE'
     if (found.code) {
-      const cleaned = found.code.split('-')[0].replace(/[^A-Za-z]/g, '').toUpperCase();
+      const cleaned = found.code.split('-')[0].replace(/[^A-Za-z0-9]/g, '').toUpperCase();
       if (cleaned) return cleaned;
     }
     // Fallback from title
@@ -50,30 +53,31 @@ export const hrmsService = {
     return words.map((w) => w[0]).join('').toUpperCase().slice(0, 4);
   },
 
-  generateNextEmployeeId(designationId?: string): string {
-    const desigCode = this.getDesignationCode(designationId);
+  generateNextEmployeeId(designationId?: string, customDesignations?: Array<{ id: string; title: string; code?: string }>): string {
+    const desigCode = this.getDesignationCode(designationId, customDesignations);
     const employees = db.getEmployees();
 
-    // Sequence is unique sequential across the organization (or per designation, formatted as 4-digit sequence 0001, 0002)
-    // Extract highest existing sequence across all employee IDs (both new format EMP-XXX-0001 and legacy EMP-001)
-    let maxSeq = 0;
+    // Check highest existing sequence for this designation prefix
+    let maxPrefixSeq = 0;
+    let maxGlobalSeq = 0;
+
     employees.forEach((e) => {
-      // Check for EMP-[CODE]-[SEQ]
-      const matchNew = e.id.match(/^EMP-[A-Z]+-(\d+)$/i);
-      if (matchNew) {
-        const num = parseInt(matchNew[1], 10);
-        if (!isNaN(num) && num > maxSeq) maxSeq = num;
-        return;
+      // Check prefix-specific match: EMP-[CODE]-[SEQ]
+      const matchPrefix = e.id.match(new RegExp(`^EMP-${desigCode}-(\\d+)$`, 'i'));
+      if (matchPrefix) {
+        const num = parseInt(matchPrefix[1], 10);
+        if (!isNaN(num) && num > maxPrefixSeq) maxPrefixSeq = num;
       }
-      // Check legacy EMP-001
-      const matchLegacy = e.id.match(/^EMP-(\d+)$/i);
-      if (matchLegacy) {
-        const num = parseInt(matchLegacy[1], 10);
-        if (!isNaN(num) && num > maxSeq) maxSeq = num;
+
+      // Check general sequential match
+      const matchAny = e.id.match(/^EMP-(?:[A-Z]+-)?(\d+)$/i);
+      if (matchAny) {
+        const num = parseInt(matchAny[1], 10);
+        if (!isNaN(num) && num > maxGlobalSeq) maxGlobalSeq = num;
       }
     });
 
-    const nextSeq = maxSeq + 1;
+    const nextSeq = maxPrefixSeq > 0 ? maxPrefixSeq + 1 : (maxGlobalSeq > 0 ? maxGlobalSeq + 1 : 1);
     return `EMP-${desigCode}-${String(nextSeq).padStart(4, '0')}`;
   },
 
@@ -99,12 +103,14 @@ export const hrmsService = {
       description: `Created new employee profile ${id} in ${newEmp.departmentId}`
     });
 
-    db.addNotification({
-      targetUserId: 'all',
-      title: 'New Team Member',
-      message: `${newEmp.firstName} ${newEmp.lastName} has joined Celestial!`,
-      module: 'employee'
-    });
+    if (newEmp.profileStatus !== 'Draft') {
+      db.addNotification({
+        targetUserId: 'all',
+        title: 'New Team Member',
+        message: `${newEmp.firstName} ${newEmp.lastName} has joined Celestial!`,
+        module: 'employee'
+      });
+    }
 
     return newEmp;
   },
@@ -123,6 +129,24 @@ export const hrmsService = {
       entityName: `${employee.firstName} ${employee.lastName}`,
       description: `Updated employee profile attributes for ${employee.id}`
     });
+  },
+
+  deleteEmployee(employeeId: string, actorUserId?: string, actorName?: string): void {
+    const existing = db.getEmployeeById(employeeId);
+    db.deleteEmployee(employeeId);
+
+    if (existing) {
+      db.logAudit({
+        actorUserId: actorUserId || 'SYSTEM',
+        actorName: actorName || 'HR Administrator',
+        actorRole: 'hr_admin',
+        action: 'DELETE',
+        module: 'EMPLOYEE',
+        entityId: employeeId,
+        entityName: `${existing.firstName} ${existing.lastName}`,
+        description: `Permanently removed employee record ${employeeId} from directory.`
+      });
+    }
   },
 
   // ---------------- MODULE 2: LEAVE ----------------

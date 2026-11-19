@@ -46,6 +46,59 @@ export interface BackendServiceRecord {
   updatedAt: string;
 }
 
+export function normalizeEmployee(emp: any): Employee {
+  if (!emp) return emp;
+  const firstName = emp.firstName || '';
+  const lastName = emp.lastName || '';
+  const email = emp.email || emp.officialEmail || '';
+  const phone = emp.phone || emp.officialPhone || '';
+
+  return {
+    ...emp,
+    firstName,
+    lastName,
+    email,
+    officialEmail: emp.officialEmail || email,
+    phone,
+    officialPhone: emp.officialPhone || phone,
+    personalEmail: emp.personalEmail || '',
+    personalPhone: emp.personalPhone || emp.personalMobile || '',
+    bloodGroup: emp.bloodGroup || '',
+    maritalStatus: emp.maritalStatus || '',
+    gender: emp.gender || '',
+    address: emp.currentAddress || emp.permanentAddress || emp.address || '',
+    currentAddress: emp.currentAddress || emp.address || '',
+    permanentAddress: emp.permanentAddress || emp.address || '',
+    dateOfBirth: emp.dateOfBirth ? String(emp.dateOfBirth).split('T')[0] : '',
+    dateOfJoining: emp.dateOfJoining ? String(emp.dateOfJoining).split('T')[0] : '',
+    confirmationDate: emp.confirmationDate ? String(emp.confirmationDate).split('T')[0] : '',
+    emergencyContact: emp.emergencyContact && (emp.emergencyContact.name || emp.emergencyContact.phone)
+      ? emp.emergencyContact
+      : {
+          name: emp.emergencyContactName || '',
+          relationship: emp.emergencyContactRelationship || '',
+          phone: emp.emergencyContactPhone || '',
+        },
+    bankDetails: emp.bankDetails && (emp.bankDetails.bankName || emp.bankDetails.accountNumber)
+      ? {
+          bankName: emp.bankDetails.bankName || '',
+          accountNumber: emp.bankDetails.accountNumber || '',
+          ifscOrRouting: emp.bankDetails.ifscOrRouting || emp.bankDetails.ifscCode || '',
+          accountType: emp.bankDetails.accountType || 'Savings',
+        }
+      : {
+          bankName: emp.bankName || '',
+          accountNumber: emp.bankAccountNumber || emp.accountNumber || '',
+          ifscOrRouting: emp.bankIfscCode || emp.ifscCode || '',
+          accountType: emp.bankAccountType || 'Savings',
+        },
+    panOrTaxNumber: emp.panOrTaxNumber || emp.panNumber || '',
+    pfUan: emp.pfUan || emp.pfNumber || '',
+    esiNumber: emp.esiNumber || '',
+    baseSalaryAnnual: emp.baseSalaryAnnual !== undefined ? Number(emp.baseSalaryAnnual) : (emp.salary ? Number(emp.salary) : 0),
+  };
+}
+
 export const employeeApi = {
   /**
    * Fetches employees with scope filtering, search and pagination
@@ -69,15 +122,16 @@ export const employeeApi = {
     // res can be an array (data) or object { employees, total, ... }
     if (Array.isArray(res)) {
       return {
-        employees: res,
+        employees: res.map(normalizeEmployee),
         total: res.length,
         page: params.page || 1,
         limit: params.limit || 50,
       };
     }
+    const rawList = res.employees || res.data || [];
     return {
-      employees: res.employees || res.data || [],
-      total: res.total ?? (res.employees ? res.employees.length : 0),
+      employees: Array.isArray(rawList) ? rawList.map(normalizeEmployee) : [],
+      total: res.total ?? (Array.isArray(rawList) ? rawList.length : 0),
       page: res.page || params.page || 1,
       limit: res.limit || params.limit || 50,
     };
@@ -87,7 +141,8 @@ export const employeeApi = {
    * Fetches single employee profile by ID with RBAC scope redaction
    */
   async getById(id: string): Promise<Employee> {
-    return apiClient.request<Employee>(`/employees/${encodeURIComponent(id)}`);
+    const res = await apiClient.request<Employee>(`/employees/${encodeURIComponent(id)}`);
+    return normalizeEmployee(res);
   },
 
   /**
@@ -150,6 +205,15 @@ export const employeeApi = {
     return apiClient.request<Employee>('/employees/enroll', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  },
+
+  /**
+   * Delete an employee record
+   */
+  async delete(id: string): Promise<{ success: boolean; message: string }> {
+    return apiClient.request<{ success: boolean; message: string }>(`/employees/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
     });
   },
 
@@ -292,6 +356,73 @@ export const employeeApi = {
       {
         method: 'PUT',
         body: JSON.stringify({ approvalStatus }),
+      }
+    );
+  },
+
+  /**
+   * Employee Documents: Fetch documents for an employee
+   */
+  async getDocuments(employeeId: string): Promise<any[]> {
+    return apiClient.request<any[]>(
+      `/employees/${encodeURIComponent(employeeId)}/documents`
+    );
+  },
+
+  /**
+   * Employee Documents: Upload / save a new document
+   */
+  async uploadDocument(
+    employeeId: string,
+    payload: {
+      title: string;
+      documentType: string;
+      fileName: string;
+      fileSizeBytes?: number;
+      fileUrl: string;
+      issueDate?: string;
+      expiryDate?: string;
+      verificationStatus?: string;
+      notes?: string;
+    }
+  ): Promise<any> {
+    return apiClient.request<any>(
+      `/employees/${encodeURIComponent(employeeId)}/documents`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    );
+  },
+
+  /**
+   * Employee Documents: Delete a document
+   */
+  async deleteDocument(employeeId: string, docId: string): Promise<{ deleted: boolean }> {
+    return apiClient.request<{ deleted: boolean }>(
+      `/employees/${encodeURIComponent(employeeId)}/documents/${encodeURIComponent(docId)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  },
+
+  /**
+   * Employee Documents: Update verification status
+   */
+  async updateDocumentStatus(
+    employeeId: string,
+    docId: string,
+    payload: {
+      verificationStatus: 'Verified' | 'Rejected' | 'Pending';
+      notes?: string;
+    }
+  ): Promise<any> {
+    return apiClient.request<any>(
+      `/employees/${encodeURIComponent(employeeId)}/documents/${encodeURIComponent(docId)}/status`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
       }
     );
   },

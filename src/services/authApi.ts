@@ -8,7 +8,7 @@ export interface LoginResponse {
   error?: string;
 }
 
-const API_BASE_URL = 'http://localhost:5000/api/v1';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api/v1';
 
 export const authApi = {
   async login(emailOrUsername: string, password: string): Promise<LoginResponse> {
@@ -34,20 +34,29 @@ export const authApi = {
       const { user, accessToken, refreshToken, permissions } = data.data;
 
       // Construct verified CurrentUser context with resolved permissions
-      const displayName = user.username
-        ? user.username
-        : user.email.split('@')[0].replace('.', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+      const isSuperAdminOrBootstrap =
+        user.role === 'super_admin' ||
+        user.username === 'bootstrap_admin' ||
+        user.email === 'arunarchana2034@gmail.com' ||
+        user.email === 'admin@orbyx.internal';
+
+      const displayName = isSuperAdminOrBootstrap
+        ? 'Bootstrap Administrator'
+        : (user.name || user.username || user.email.split('@')[0].replace('.', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()));
 
       const currentUser: CurrentUser = {
         id: user.id,
         employeeId: user.employeeId || '',
         name: displayName,
-        username: user.username,
+        username: user.username || (isSuperAdminOrBootstrap ? 'bootstrap_admin' : undefined),
         email: user.email,
         role: user.role,
         departmentId: user.departmentId || '',
         designationTitle: user.role === 'super_admin' ? 'Super Administrator' : 'Enterprise User',
-        avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4f46e5&color=fff&size=256`,
+        avatarUrl: isSuperAdminOrBootstrap
+          ? `https://ui-avatars.com/api/?name=Bootstrap+Administrator&background=4f46e5&color=fff&size=256`
+          : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4f46e5&color=fff&size=256`,
+        permissions: permissions || (user as any).permissions || [],
       };
 
       return {

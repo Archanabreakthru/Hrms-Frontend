@@ -17,7 +17,7 @@ export const Celestial_ACCESS_TOKEN_KEY = 'orbyx_hrms_access_token';
 export const Celestial_REFRESH_TOKEN_KEY = 'orbyx_hrms_refresh_token';
 
 class ApiClient {
-  private baseUrl: string = 'http://localhost:5000/api/v1';
+  private baseUrl: string = (import.meta as any).env?.VITE_API_BASE_URL || '/api/v1';
   private isRefreshing: boolean = false;
   private refreshSubscribers: Array<(token: string) => void> = [];
 

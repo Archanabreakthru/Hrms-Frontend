@@ -51,6 +51,9 @@ interface EmployeeProfileModalProps {
   employee: Employee | BasicDirectoryEmployee | null;
   isOpen: boolean;
   onClose: () => void;
+  departments?: Array<{ id: string; code?: string; name: string }>;
+  designations?: Array<{ id: string; code?: string; title: string; level?: string | number }>;
+  branches?: Array<{ id: string; code?: string; name: string; city?: string }>;
 }
 
 type ProfileTab =
@@ -71,7 +74,10 @@ type ProfileTab =
 export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   employee,
   isOpen,
-  onClose
+  onClose,
+  departments: propDepts,
+  designations: propDesigs,
+  branches: propBranches
 }) => {
   const { currentUser } = useAuth();
   const [activeTab, setActiveTab] = useState<ProfileTab>('personal');
@@ -222,7 +228,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   if (!employee) return null;
 
   // Retrieve authorized profile through permissionService (backend-style security enforcement)
-  const authorizedProfile = permissionService.getAuthorizedProfile(employee.id, currentUser);
+  const authorizedProfile = permissionService.getAuthorizedProfile(employee.id, currentUser, employee as Employee);
   if (!authorizedProfile) return null;
 
   // -------------------------------------------------------------------------
@@ -320,15 +326,15 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   // -------------------------------------------------------------------------
   const full = authorizedProfile as Employee & { viewScope: string; canViewSalary: boolean };
 
-  const departments = db.getDepartments();
-  const designations = db.getDesignations();
-  const branches = db.getBranches();
+  const departments = propDepts && propDepts.length > 0 ? propDepts : db.getDepartments();
+  const designations = propDesigs && propDesigs.length > 0 ? propDesigs : db.getDesignations();
+  const branches = propBranches && propBranches.length > 0 ? propBranches : db.getBranches();
   const shifts = db.getShifts();
   const allEmployees = db.getEmployees();
 
-  const dept = departments.find((d) => d.id === full.departmentId);
-  const desig = designations.find((d) => d.id === full.designationId);
-  const branch = branches.find((b) => b.id === full.branchId);
+  const dept = departments.find((d) => d.id === full.departmentId || (d.code && d.code === full.departmentId));
+  const desig = designations.find((d) => d.id === full.designationId || (d.code && d.code === full.designationId));
+  const branch = branches.find((b) => b.id === full.branchId || (b.code && b.code === full.branchId));
   const shift = shifts.find((s) => s.id === full.shiftId);
   const manager = allEmployees.find((e) => e.id === full.reportingManagerId);
 
@@ -1501,7 +1507,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                   <div className="grid grid-cols-2 gap-4">
                     <div><span className="text-slate-500 block">Department:</span><span className="font-medium text-slate-800 text-sm">{dept?.name} ({dept?.code})</span></div>
                     <div><span className="text-slate-500 block">Designation:</span><span className="font-medium text-slate-800 text-sm">{desig?.title}</span></div>
-                    <div><span className="text-slate-500 block">Job Level:</span><span className="font-medium text-slate-800">{desig?.level || 'Standard'}</span></div>
+                    <div><span className="text-slate-500 block">Job Level:</span><span className="font-medium text-slate-800">{(desig as any)?.level || 'Standard'}</span></div>
                     <div><span className="text-slate-500 block">Reports Directly To:</span><span className="font-medium text-indigo-700">{manager ? `${manager.firstName} ${manager.lastName} (${manager.id})` : 'Company Board'}</span></div>
                   </div>
                 </div>

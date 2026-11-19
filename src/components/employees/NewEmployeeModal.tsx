@@ -65,34 +65,21 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
         ]);
         if (isMounted) {
           if (Array.isArray(depts)) {
-            setDepartments(depts.map((d) => ({ id: d.code || d.id, name: d.name, code: d.code })));
-            if (depts.length > 0 && !departmentId) {
-              setDepartmentId(depts[0].code || depts[0].id);
-            }
+            setDepartments(depts.map((d) => ({ id: d.id, name: d.name, code: d.code })));
           }
           if (Array.isArray(desigs)) {
-            setDesignations(desigs.map((ds) => ({ id: ds.code || ds.id, title: ds.title, level: String(ds.level || 1) })));
-            if (desigs.length > 0 && !designationId) {
-              setDesignationId(desigs[0].code || desigs[0].id);
-            }
+            setDesignations(desigs.map((ds) => ({ id: ds.id, title: ds.title, level: String(ds.level || 1), code: ds.code })));
           }
           if (Array.isArray(brs)) {
-            setBranches(brs.map((b) => ({ id: b.code || b.id, name: b.name, city: b.city })));
-            if (brs.length > 0 && !branchId) {
-              setBranchId(brs[0].code || brs[0].id);
-            }
+            setBranches(brs.map((b) => ({ id: b.id, name: b.name, city: b.city, code: b.code })));
           }
-          if (Array.isArray(shfts)) {
+          if (Array.isArray(shfts) && shfts.length > 0) {
             setShifts(shfts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })));
-            if (shfts.length > 0 && !shiftId) {
-              setShiftId(shfts[0].id);
-            }
+          } else {
+            setShifts([{ id: 'd3b07384-d113-4e00-bf7d-9442fa6054be', name: 'General Day Shift (09:30 - 18:30)', startTime: '09:30', endTime: '18:30' }]);
           }
           if (empRes && Array.isArray(empRes.employees)) {
             setAllEmployees(empRes.employees);
-            if (empRes.employees.length > 0 && !reportingManagerId) {
-              setReportingManagerId(empRes.employees[0].id);
-            }
           }
         }
       } catch (err) {
@@ -117,17 +104,17 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   const [personalEmail, setPersonalEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [dob, setDob] = useState('');
-  const [gender, setGender] = useState<'Male' | 'Female' | 'Other'>('Male');
-  const [bloodGroup, setBloodGroup] = useState('O+');
-  const [maritalStatus, setMaritalStatus] = useState<'Single' | 'Married' | 'Other'>('Single');
+  const [gender, setGender] = useState<'Male' | 'Female' | 'Other' | ''>('');
+  const [bloodGroup, setBloodGroup] = useState('');
+  const [maritalStatus, setMaritalStatus] = useState<'Single' | 'Married' | 'Other' | ''>('');
   const [permanentAddress, setPermanentAddress] = useState('');
   const [currentAddress, setCurrentAddress] = useState('');
-  const [sameAsPermanent, setSameAsPermanent] = useState(true);
+  const [sameAsPermanent, setSameAsPermanent] = useState(false);
   const [enableLoginAccess, setEnableLoginAccess] = useState(true);
 
   // Emergency contact
   const [emName, setEmName] = useState('');
-  const [emRelation, setEmRelation] = useState('Parent');
+  const [emRelation, setEmRelation] = useState('');
   const [emPhone, setEmPhone] = useState('');
 
   // -------------------------------------------------------------
@@ -138,19 +125,19 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   const [branchId, setBranchId] = useState('');
   const [shiftId, setShiftId] = useState('');
   const [reportingManagerId, setReportingManagerId] = useState('');
-  const [employmentType, setEmploymentType] = useState<EmploymentType>('Permanent');
-  const [employeeCategory, setEmployeeCategory] = useState('Core Engineering Staff');
-  const [employmentStatus, setEmploymentStatus] = useState<'Active' | 'Probation' | 'Notice Period'>('Active');
-  const [dateOfJoining, setDateOfJoining] = useState(new Date().toISOString().split('T')[0]);
+  const [employmentType, setEmploymentType] = useState<EmploymentType | ''>('');
+  const [employeeCategory, setEmployeeCategory] = useState('');
+  const [employmentStatus, setEmploymentStatus] = useState<'Active' | 'Probation' | 'Notice Period' | ''>('');
+  const [dateOfJoining, setDateOfJoining] = useState('');
   const [confirmationDate, setConfirmationDate] = useState('');
-  const [noticePeriodDays, setNoticePeriodDays] = useState(60);
-  const [probationPeriodDays, setProbationPeriodDays] = useState(180);
+  const [noticePeriodDays, setNoticePeriodDays] = useState<number | ''>('');
+  const [probationPeriodDays, setProbationPeriodDays] = useState<number | ''>('');
 
   // -------------------------------------------------------------
   // Section 3: Salary and Banking Details
   // -------------------------------------------------------------
-  const [baseSalaryAnnual, setBaseSalaryAnnual] = useState<number>(0);
-  const [salaryStructureId, setSalaryStructureId] = useState(structures[0]?.id || 'SS-ENG-LEAD');
+  const [baseSalaryAnnual, setBaseSalaryAnnual] = useState<number | ''>('');
+  const [salaryStructureId, setSalaryStructureId] = useState('');
   const [bankName, setBankName] = useState('');
   const [accountHolderName, setAccountHolderName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
@@ -180,7 +167,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Dynamic generated employee ID based on selected designation
-  const nextId = hrmsService.generateNextEmployeeId(designationId);
+  const nextId = hrmsService.generateNextEmployeeId(designationId, designations);
 
   // Error and file upload state
   const [error, setError] = useState<string | null>(null);
@@ -193,13 +180,13 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
     email: officialEmail,
     phone,
     dateOfBirth: dob,
-    gender,
+    gender: (gender || undefined) as any,
     bloodGroup,
     address: permanentAddress,
     departmentId,
     designationId,
     branchId,
-    employmentType,
+    employmentType: (employmentType || undefined) as any,
     dateOfJoining,
     bankDetails: {
       bankName,
@@ -312,10 +299,6 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
         setActiveTab('salary');
         return;
       }
-      if (completeness.missingFields.length > 0 && completeness.percentage < 70) {
-        setError(`Please complete mandatory onboarding information. Missing: ${completeness.missingFields.slice(0, 3).join(', ')}.`);
-        return;
-      }
     } else {
       if (!firstName.trim() && !officialEmail.trim()) {
         setError('To save a draft, please provide at least an employee first name or email.');
@@ -327,51 +310,55 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
       const finalPermanent = permanentAddress.trim() || (isDraft ? '' : 'Address Pending HR Collection');
       const finalCurrent = sameAsPermanent ? finalPermanent : (currentAddress.trim() || finalPermanent);
 
+      const clientGeneratedUserId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'c' + Math.random().toString(16).substring(2, 9) + '-' + Math.random().toString(16).substring(2, 6) + '-4' + Math.random().toString(16).substring(2, 5) + '-a' + Math.random().toString(16).substring(2, 5) + '-' + Math.random().toString(16).substring(2, 14);
+
       const created = hrmsService.createEmployee(
         {
-          userId: `user_${(firstName || 'draft').toLowerCase()}_${Math.floor(Math.random() * 1000)}`,
-          firstName: firstName.trim() || 'Draft',
+          userId: clientGeneratedUserId,
+          firstName: firstName.trim() || (isDraft ? 'Draft' : ''),
           lastName: lastName.trim(),
-          email: officialEmail.trim() || `pending_${Date.now()}@orbyx.internal`,
+          email: officialEmail.trim() || (isDraft ? `draft.${Date.now()}@orbyx.internal` : ''),
           officialEmail: officialEmail.trim(),
           personalEmail: personalEmail.trim() || undefined,
-          phone: phone.trim() || 'Pending',
+          phone: phone.trim(),
           officialPhone: phone.trim(),
           avatarUrl: avatarUrl.trim(),
-          dateOfBirth: dob,
-          gender,
-          bloodGroup,
-          maritalStatus,
-          address: finalPermanent,
-          permanentAddress: finalPermanent,
-          currentAddress: finalCurrent,
-          emergencyContact: {
-            name: emName.trim() || 'Pending HR Verification',
-            relationship: emRelation,
+          dateOfBirth: dob || undefined,
+          gender: gender || undefined,
+          bloodGroup: bloodGroup || undefined,
+          maritalStatus: maritalStatus || undefined,
+          address: finalPermanent || undefined,
+          permanentAddress: finalPermanent || undefined,
+          currentAddress: finalCurrent || undefined,
+          emergencyContact: emName.trim() ? {
+            name: emName.trim(),
+            relationship: emRelation.trim(),
             phone: emPhone.trim() || phone.trim()
-          },
-          departmentId,
-          designationId,
-          branchId,
-          employmentType,
-          status: employmentStatus,
+          } : undefined,
+          departmentId: departmentId || undefined,
+          designationId: designationId || undefined,
+          branchId: branchId || undefined,
+          employmentType: (employmentType as EmploymentType) || 'Permanent',
+          status: employmentStatus || 'Active',
           profileStatus: isDraft ? 'Draft' : completeness.percentage >= 85 ? 'Active' : 'Profile Incomplete',
           accountStatus: enableLoginAccess ? 'PENDING_ACTIVATION' : 'DISABLED',
           invitationStatus: enableLoginAccess ? 'PENDING_INVITE' : 'NOT_REQUIRED',
-          employeeCategory,
-          dateOfJoining,
+          employeeCategory: employeeCategory.trim() || undefined,
+          dateOfJoining: dateOfJoining || new Date().toISOString().split('T')[0],
           confirmationDate: confirmationDate || undefined,
-          noticePeriodDays,
-          probationPeriodDays,
-          reportingManagerId,
-          shiftId,
-          bankDetails: {
-            bankName: bankName.trim() || 'Pending Collection',
-            accountNumber: accountNumber.trim() || 'PENDING',
-            ifscOrRouting: ifsc.trim() || 'PENDING',
+          noticePeriodDays: typeof noticePeriodDays === 'number' ? noticePeriodDays : undefined,
+          probationPeriodDays: typeof probationPeriodDays === 'number' ? probationPeriodDays : undefined,
+          reportingManagerId: reportingManagerId || undefined,
+          shiftId: shiftId || undefined,
+          bankDetails: (bankName.trim() || accountNumber.trim() || ifsc.trim()) ? {
+            bankName: bankName.trim(),
+            accountNumber: accountNumber.trim(),
+            ifscOrRouting: ifsc.trim(),
             accountType: 'Savings'
-          },
-          panOrTaxNumber: (panNumber.trim() || 'PENDING').toUpperCase(),
+          } : undefined,
+          panOrTaxNumber: panNumber.trim() ? panNumber.trim().toUpperCase() : undefined,
           pfUan: pfUan.trim() || undefined,
           esiNumber: esiNumber.trim() || undefined,
           epfApplicable,
@@ -380,63 +367,70 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
           ptApplicable,
           statutoryExemptionReason: statutoryExemptionReason.trim() || undefined,
           baseSalaryAnnual: Number(baseSalaryAnnual) || 0,
-          salaryStructureId
+          salaryStructureId: salaryStructureId || undefined
         },
         currentUser.id,
         currentUser.name
       );
 
       // Connect to Employee Service backend enrollment API
-      try {
-        if (isDraft) {
-          await employeeApi.createDraft({
-            firstName: created.firstName,
-            lastName: created.lastName,
-            email: created.officialEmail || created.email,
-            phone: created.phone,
-            userId: created.userId,
-            departmentId: created.departmentId,
-            designationId: created.designationId,
-            branchId: created.branchId,
-            employmentType: created.employmentType,
-          });
-        } else {
-          await employeeApi.enroll({
-            id: created.id,
-            userId: created.userId,
-            firstName: created.firstName,
-            lastName: created.lastName,
-            email: created.officialEmail || created.email,
-            phone: created.phone,
-            dateOfBirth: created.dateOfBirth,
-            gender: created.gender as any,
-            address: created.address,
-            emergencyContact: {
-              name: created.emergencyContact?.name || 'Primary Contact',
-              relationship: created.emergencyContact?.relationship || 'Family',
-              phone: created.emergencyContact?.phone || created.phone,
-            },
-            departmentId: created.departmentId,
-            designationId: created.designationId,
-            branchId: created.branchId,
-            employmentType: created.employmentType,
-            dateOfJoining: created.dateOfJoining,
-            noticePeriodDays: created.noticePeriodDays,
-            shiftId: created.shiftId,
-            bankDetails: {
-              accountNumber: created.bankDetails.accountNumber,
-              ifscCode: created.bankDetails.ifscOrRouting,
-              bankName: created.bankDetails.bankName,
-            },
-            panOrTaxNumber: created.panOrTaxNumber,
-            pfUan: created.pfUan,
-            esiNumber: created.esiNumber,
-            baseSalaryAnnual: created.baseSalaryAnnual,
-            salaryStructureId: created.salaryStructureId,
-          });
+      if (isDraft) {
+        const safeDraftEmail = (created.officialEmail && created.officialEmail.includes('@'))
+          ? created.officialEmail
+          : (created.email && created.email.includes('@'))
+          ? created.email
+          : `draft.${Date.now()}@orbyx.internal`;
+        const draftRes = await employeeApi.createDraft({
+          firstName: created.firstName,
+          lastName: created.lastName || '',
+          email: safeDraftEmail,
+          phone: created.phone || '',
+          userId: created.userId,
+          departmentId: created.departmentId || undefined,
+          designationId: created.designationId || undefined,
+          branchId: created.branchId || undefined,
+          employmentType: created.employmentType,
+        });
+        if (draftRes?.id) {
+          created.id = draftRes.id;
         }
-      } catch (backendErr: any) {
-        console.warn('Backend enrollment sync skipped/deferred, persisted to local state:', backendErr);
+      } else {
+        const enrollRes = await employeeApi.enroll({
+          id: undefined,
+          userId: created.userId,
+          firstName: created.firstName,
+          lastName: created.lastName,
+          email: created.officialEmail || created.email,
+          phone: created.phone,
+          dateOfBirth: created.dateOfBirth,
+          gender: created.gender as any,
+          address: created.address,
+          emergencyContact: {
+            name: created.emergencyContact?.name || 'Primary Contact',
+            relationship: created.emergencyContact?.relationship || 'Family',
+            phone: created.emergencyContact?.phone || created.phone,
+          },
+          departmentId: created.departmentId,
+          designationId: created.designationId,
+          branchId: created.branchId,
+          employmentType: created.employmentType,
+          dateOfJoining: created.dateOfJoining,
+          noticePeriodDays: created.noticePeriodDays,
+          shiftId: created.shiftId,
+          bankDetails: {
+            accountNumber: created.bankDetails.accountNumber,
+            ifscCode: created.bankDetails.ifscOrRouting,
+            bankName: created.bankDetails.bankName,
+          },
+          panOrTaxNumber: created.panOrTaxNumber,
+          pfUan: created.pfUan,
+          esiNumber: created.esiNumber,
+          baseSalaryAnnual: created.baseSalaryAnnual,
+          salaryStructureId: created.salaryStructureId,
+        });
+        if (enrollRes?.id) {
+          created.id = enrollRes.id;
+        }
       }
 
       // Create initial Date of Joining Service Record
@@ -496,49 +490,6 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
       maxWidth="3xl"
     >
       <div className="space-y-4 text-xs">
-        {/* Progress & Completeness Banner */}
-        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-800">Profile Data Completeness:</span>
-              <span className={`px-2 py-0.5 rounded font-semibold ${
-                completeness.status === 'Not Started'
-                  ? 'bg-slate-100 text-slate-600 border border-slate-200'
-                  : completeness.percentage >= 85 || completeness.status === 'Complete'
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : 'bg-amber-50 text-amber-700 border border-amber-200'
-              }`}>
-                {completeness.status === 'Not Started'
-                  ? 'Not Started'
-                  : completeness.status === 'Complete'
-                  ? '100% - Complete'
-                  : `${completeness.percentage}% - In Progress`}
-              </span>
-            </div>
-            <span className="text-[11px] text-slate-500 font-mono">Assigned ID: {nextId}</span>
-          </div>
-
-          <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ${
-                completeness.status === 'Not Started'
-                  ? 'w-0'
-                  : completeness.percentage >= 85 || completeness.status === 'Complete'
-                  ? 'bg-emerald-500'
-                  : 'bg-amber-500'
-              }`}
-              style={{ width: completeness.status === 'Not Started' ? '0%' : `${completeness.percentage}%` }}
-            />
-          </div>
-
-          {completeness.missingFields.length > 0 && completeness.status !== 'Not Started' && (
-            <p className="text-[11px] text-slate-500 truncate">
-              <span className="font-semibold text-slate-700">Pending Information:</span> {completeness.missingFields.slice(0, 6).join(', ')}
-              {completeness.missingFields.length > 6 ? ` +${completeness.missingFields.length - 6} more` : ''}
-            </p>
-          )}
-        </div>
-
         {error && (
           <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl flex items-start gap-2 font-medium">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -699,6 +650,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setGender(e.target.value as any)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Gender</option>
                   <option value="Male">Male</option>
                   <option value="Female">Female</option>
                   <option value="Other">Other</option>
@@ -712,6 +664,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setBloodGroup(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Blood Group</option>
                   <option value="A+">A+</option>
                   <option value="A-">A-</option>
                   <option value="B+">B+</option>
@@ -730,6 +683,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setMaritalStatus(e.target.value as any)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Marital Status</option>
                   <option value="Single">Single</option>
                   <option value="Married">Married</option>
                   <option value="Other">Other</option>
@@ -799,6 +753,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                     onChange={(e) => setEmRelation(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   >
+                    <option value="">Select Relationship</option>
                     <option value="Parent">Parent</option>
                     <option value="Spouse">Spouse</option>
                     <option value="Sibling">Sibling</option>
@@ -898,6 +853,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setEmploymentType(e.target.value as any)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Employment Type</option>
                   <option value="Permanent">Permanent</option>
                   <option value="Probation">Probation</option>
                   <option value="Contract">Contract</option>
@@ -941,6 +897,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setEmploymentStatus(e.target.value as any)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Status</option>
                   <option value="Active">Active</option>
                   <option value="Probation">Probation</option>
                   <option value="Notice Period">Notice Period</option>
@@ -964,7 +921,8 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                 <input
                   type="number"
                   value={probationPeriodDays}
-                  onChange={(e) => setProbationPeriodDays(Number(e.target.value))}
+                  placeholder="e.g. 180"
+                  onChange={(e) => setProbationPeriodDays(e.target.value ? Number(e.target.value) : '')}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 />
               </div>
@@ -974,7 +932,8 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                 <input
                   type="number"
                   value={noticePeriodDays}
-                  onChange={(e) => setNoticePeriodDays(Number(e.target.value))}
+                  placeholder="e.g. 60"
+                  onChange={(e) => setNoticePeriodDays(e.target.value ? Number(e.target.value) : '')}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 />
               </div>
@@ -1007,7 +966,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-mono text-sm"
                 />
                 <span className="text-[11px] text-slate-500 mt-1 block">
-                  Monthly Gross Base: ₹{Math.round(baseSalaryAnnual / 12).toLocaleString('en-IN')}
+                  Monthly Gross Base: ₹{baseSalaryAnnual ? Math.round(Number(baseSalaryAnnual) / 12).toLocaleString('en-IN') : '0'}
                 </span>
               </div>
 
@@ -1018,6 +977,7 @@ export const NewEmployeeModal: React.FC<NewEmployeeModalProps> = ({ isOpen, onCl
                   onChange={(e) => setSalaryStructureId(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                 >
+                  <option value="">Select Salary Structure</option>
                   {structures.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name} ({s.id})

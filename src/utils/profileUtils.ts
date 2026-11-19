@@ -69,27 +69,34 @@ export function calculateProfileCompleteness(emp: Partial<Employee>): ProfileCom
   else { totalScore += 5; }
 
   // Section 3: Salary & Banking Details (Weight: 25)
-  const isBankPending = !emp.bankDetails?.bankName || emp.bankDetails.bankName === 'Pending Collection';
+  const bName = emp.bankDetails?.bankName || (emp as any).bankName;
+  const isBankPending = !bName || bName === 'Pending Collection';
   if (isBankPending) missing.push('Bank Name');
   else { totalScore += 5; populatedCount++; }
 
-  const isAccountPending = !emp.bankDetails?.accountNumber || emp.bankDetails.accountNumber === 'PENDING';
+  const bAcc = emp.bankDetails?.accountNumber || (emp as any).accountNumber || (emp as any).bankAccountNumber;
+  const isAccountPending = !bAcc || bAcc === 'PENDING';
   if (isAccountPending) missing.push('Bank Account Number');
   else { totalScore += 5; populatedCount++; }
 
-  const isIfscPending = !emp.bankDetails?.ifscOrRouting || emp.bankDetails.ifscOrRouting === 'PENDING';
+  const bIfsc = emp.bankDetails?.ifscOrRouting || (emp as any).ifscCode || (emp as any).bankIfscCode;
+  const isIfscPending = !bIfsc || bIfsc === 'PENDING';
   if (isIfscPending) missing.push('IFSC Code');
   else { totalScore += 5; populatedCount++; }
 
-  const isPanPending = !emp.panOrTaxNumber || emp.panOrTaxNumber.trim() === '' || emp.panOrTaxNumber === 'PENDING';
+  const pan = emp.panOrTaxNumber || (emp as any).panNumber;
+  const isPanPending = !pan || pan.trim() === '' || pan === 'PENDING';
   if (isPanPending) missing.push('PAN / Tax ID');
   else { totalScore += 5; populatedCount++; }
 
-  if (!emp.baseSalaryAnnual || emp.baseSalaryAnnual <= 0) missing.push('Annual CTC / Salary');
+  const salary = emp.baseSalaryAnnual || (emp as any).salary;
+  if (!salary || salary <= 0) missing.push('Annual CTC / Salary');
   else { totalScore += 5; populatedCount++; }
 
   // Section 4: Emergency Contact & Statutory (Weight: 20)
-  if (!emp.emergencyContact?.name || !emp.emergencyContact?.phone || emp.emergencyContact?.name.trim() === '' || emp.emergencyContact?.name.includes('Pending')) {
+  const emName = emp.emergencyContact?.name || (emp as any).emergencyContactName;
+  const emPhone = emp.emergencyContact?.phone || (emp as any).emergencyContactPhone;
+  if (!emName || !emPhone || emName.trim() === '' || emName.includes('Pending')) {
     missing.push('Emergency Contact Details');
   } else {
     totalScore += 10;

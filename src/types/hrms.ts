@@ -5,7 +5,8 @@ export type UserRole =
   | 'admin'
   | 'hr_admin'
   | 'reporting_manager'
-  | 'employee';
+  | 'employee'
+  | string;
 
 export type EmploymentType = 'Permanent' | 'Contract' | 'Probation' | 'Intern';
 export type EmploymentStatus = 'Active' | 'On Leave' | 'Probation' | 'Notice Period' | 'Separated' | 'Inactive';
@@ -87,6 +88,10 @@ export interface Branch {
   name: string;
   code: string;
   city: string;
+  state?: string;
+  country?: string;
+  address?: string;
+  timezone?: string;
   isHeadquarters: boolean;
   isActive?: boolean;
 }
@@ -883,6 +888,7 @@ export interface CurrentUser {
   designationTitle: string;
   avatarUrl: string;
   isGovernanceOnly?: boolean;
+  permissions?: string[];
 }
 
 export type PolicyModule =

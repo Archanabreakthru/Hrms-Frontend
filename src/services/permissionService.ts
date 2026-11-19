@@ -182,7 +182,7 @@ export const permissionService = {
     if (this.isSelf(targetEmployeeId, currentUser)) {
       return 'self';
     }
-    if (currentUser.role === 'hr_admin') {
+    if (currentUser.role === 'hr_admin' || currentUser.role === 'super_admin' || currentUser.role === 'admin') {
       return 'organization_admin';
     }
     if (this.isDirectReport(targetEmployeeId, currentUser)) {
@@ -200,8 +200,8 @@ export const permissionService = {
    * Strips out all confidential fields when viewed by a colleague.
    * Pure read function - safe to call during React render without side-effects.
    */
-  getAuthorizedProfile(targetEmployeeId: string, currentUser: CurrentUser): ProfileViewResult | null {
-    const raw = db.getEmployeeById(targetEmployeeId);
+  getAuthorizedProfile(targetEmployeeId: string, currentUser: CurrentUser, fallbackEmployee?: Employee): ProfileViewResult | null {
+    const raw = fallbackEmployee || db.getEmployeeById(targetEmployeeId);
     if (!raw) return null;
 
     const scope = this.resolveAccessScope(targetEmployeeId, currentUser);

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, resetToSeedData, subscribeToDB } from '../../db/storage';
 import { useAuth } from '../../services/authContext';
 import { authApi } from '../../services/authApi';
+import { orgApi } from '../../services/orgApi';
 import {
   AuditLog,
   CurrentUser,
@@ -40,19 +41,23 @@ const DELEGABLE_ACTIONS_LIST: { id: DelegableAction; label: string }[] = [
 ];
 
 export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) => {
-  const { currentUser, canManageOrganization, allPersonas } = useAuth();
+  const { currentUser, canManageOrganization } = useAuth();
   const [liveUsers, setLiveUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState<boolean>(true);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
   const isSuperAdmin = currentUser.role === 'super_admin' || currentUser.role === 'admin';
 
   const fetchUsers = async () => {
+    setLoadingUsers(true);
     try {
       const users = await authApi.listUsers();
-      if (Array.isArray(users) && users.length > 0) {
+      if (Array.isArray(users)) {
         setLiveUsers(users);
       }
-    } catch {
-      // fallback
+    } catch (err) {
+      console.warn('Failed to load authoritative system accounts:', err);
+    } finally {
+      setLoadingUsers(false);
     }
   };
 
@@ -80,7 +85,7 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
     }
   };
 
-  const availableUsers: any[] = liveUsers.length > 0 ? liveUsers : allPersonas;
+  const availableUsers: any[] = liveUsers;
   const [activeTab, setActiveTab] = useState<
     'users_rbac' | 'delegations' | 'preferences' | 'policies' | 'audit'
   >(() => {
@@ -93,22 +98,37 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
 
   const [saveSuccess, setSaveSuccess] = useState('');
   const [auditModuleFilter, setAuditModuleFilter] = useState('ALL');
-  const [delegations, setDelegations] = useState<DelegationRecord[]>(() => db.getDelegations());
+  const [delegations, setDelegations] = useState<any[]>([]);
+  const [loadingDelegations, setLoadingDelegations] = useState(false);
   const [showCreateDelegation, setShowCreateDelegation] = useState(false);
   const [delError, setDelError] = useState('');
   const [delForm, setDelForm] = useState({
-    delegatorUserId: 'user_md_selvakumar',
-    delegateUserId: 'user_hr_admin',
+    delegatorUserId: '',
+    delegateUserId: '',
     permittedActions: ['APPROVE_LEAVE', 'APPROVE_ATTENDANCE', 'APPROVE_POLICY'] as DelegableAction[],
     effectiveFrom: new Date().toISOString().slice(0, 10),
     effectiveTo: '2026-12-31',
     reason: ''
   });
 
-  useEffect(() => {
-    return subscribeToDB(() => {
+  const fetchDelegations = async () => {
+    setLoadingDelegations(true);
+    try {
+      const data = await orgApi.getDelegations();
+      if (Array.isArray(data)) {
+        setDelegations(data);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch real delegations from orgApi:', err);
+      // fallback to local if needed
       setDelegations(db.getDelegations());
-    });
+    } finally {
+      setLoadingDelegations(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDelegations();
   }, []);
 
   const [sysPrefs, setSysPrefs] = useState(() => {
@@ -146,9 +166,17 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
     );
   }
 
-  const handleCreateDelegation = (e: React.FormEvent) => {
+  const handleCreateDelegation = async (e: React.FormEvent) => {
     e.preventDefault();
     setDelError('');
+    if (!delForm.delegatorUserId) {
+      setDelError('Please select a represented executive delegator.');
+      return;
+    }
+    if (!delForm.delegateUserId) {
+      setDelError('Please select an authorized delegate.');
+      return;
+    }
     if (delForm.delegatorUserId === delForm.delegateUserId) {
       setDelError('Self-delegation is blocked: Delegator and Delegate must be different accounts.');
       return;
@@ -164,65 +192,70 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
 
     const delegator = availableUsers.find((u) => u.id === delForm.delegatorUserId);
     const delegate = availableUsers.find((u) => u.id === delForm.delegateUserId);
-    if (!delegator || !delegate) return;
+    if (!delegator || !delegate) {
+      setDelError('Selected delegator or delegate account not found.');
+      return;
+    }
 
-    const record: DelegationRecord = {
-      id: `DEL-${Date.now().toString().slice(-4)}`,
-      delegatorUserId: delegator.id,
-      delegatorName: delegator.name,
-      delegatorRole: delegator.role,
-      delegateUserId: delegate.id,
-      delegateName: delegate.name,
-      delegateRole: delegate.role,
-      permittedActions: delForm.permittedActions,
-      applicableModules: ['LEAVE', 'ATTENDANCE', 'PAYROLL', 'EXPENSE', 'SYSTEM', 'EMPLOYEE'],
-      effectiveFrom: delForm.effectiveFrom,
-      effectiveTo: delForm.effectiveTo,
-      reason: delForm.reason.trim(),
-      status: 'Active',
-      createdAt: new Date().toISOString().slice(0, 10),
-      createdBy: `${currentUser.name} (${currentUser.role})`
-    };
+    const delegatorDisplayName = delegator.username || delegator.name || delegator.email;
+    const delegateDisplayName = delegate.username || delegate.name || delegate.email;
 
-    db.saveDelegation(record);
-    db.logAudit({
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role,
-      action: 'CREATE',
-      module: 'SYSTEM',
-      entityId: record.id,
-      entityName: `${delegator.name} -> ${delegate.name}`,
-      description: `Granted delegated authority (${record.id}) from ${delegator.name} to ${delegate.name} (${record.effectiveFrom} to ${record.effectiveTo}). Reason: ${record.reason}`
-    });
-    setDelegations(db.getDelegations());
-    setShowCreateDelegation(false);
-    setSaveSuccess(`Delegation ${record.id} granted to ${delegate.name}.`);
-    setTimeout(() => setSaveSuccess(''), 3500);
+    try {
+      await orgApi.createDelegation({
+        delegatorUserId: delegator.id,
+        delegatorEmployeeId: delegator.employeeId,
+        delegateUserId: delegate.id,
+        delegateEmployeeId: delegate.employeeId,
+        permittedActions: delForm.permittedActions,
+        applicableModules: ['LEAVE', 'ATTENDANCE', 'PAYROLL', 'EXPENSE', 'SYSTEM', 'EMPLOYEE'],
+        effectiveFrom: delForm.effectiveFrom,
+        effectiveTo: delForm.effectiveTo,
+        reason: delForm.reason.trim(),
+      });
+
+      db.logAudit({
+        actorUserId: currentUser.id,
+        actorName: currentUser.name,
+        actorRole: currentUser.role,
+        action: 'CREATE',
+        module: 'SYSTEM',
+        entityId: delegator.id,
+        entityName: `${delegatorDisplayName} -> ${delegateDisplayName}`,
+        description: `Granted persistent delegated authority from ${delegatorDisplayName} to ${delegateDisplayName} (${delForm.effectiveFrom} to ${delForm.effectiveTo}). Reason: ${delForm.reason}`
+      });
+
+      await fetchDelegations();
+      setShowCreateDelegation(false);
+      setDelForm({
+        ...delForm,
+        reason: '',
+      });
+      setSaveSuccess(`Delegation granted to ${delegateDisplayName} successfully in database.`);
+      setTimeout(() => setSaveSuccess(''), 3500);
+    } catch (err: any) {
+      setDelError(err?.message || 'Failed to persist delegation in database');
+    }
   };
 
-  const handleRevokeDelegation = (del: DelegationRecord) => {
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const updated: DelegationRecord = {
-      ...del,
-      status: 'Revoked',
-      revokedAt: todayIso,
-      revokedBy: `${currentUser.name} (${currentUser.role})`
-    };
-    db.saveDelegation(updated);
-    db.logAudit({
-      actorUserId: currentUser.id,
-      actorName: currentUser.name,
-      actorRole: currentUser.role,
-      action: 'UPDATE',
-      module: 'SYSTEM',
-      entityId: del.id,
-      entityName: `${del.delegatorName} -> ${del.delegateName}`,
-      description: `Revoked delegated authority ${del.id} (${del.delegatorName} -> ${del.delegateName})`
-    });
-    setDelegations(db.getDelegations());
-    setSaveSuccess(`Delegation ${del.id} revoked immediately.`);
-    setTimeout(() => setSaveSuccess(''), 3500);
+  const handleRevokeDelegation = async (del: any) => {
+    try {
+      await orgApi.revokeDelegation(del.id);
+      db.logAudit({
+        actorUserId: currentUser.id,
+        actorName: currentUser.name,
+        actorRole: currentUser.role,
+        action: 'UPDATE',
+        module: 'SYSTEM',
+        entityId: del.id,
+        entityName: del.id,
+        description: `Revoked delegated authority ${del.id} in database`
+      });
+      await fetchDelegations();
+      setSaveSuccess(`Delegation ${del.id} revoked in database.`);
+      setTimeout(() => setSaveSuccess(''), 3500);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to revoke delegation');
+    }
   };
 
   const handleSavePreferences = (e: React.FormEvent) => {
@@ -404,11 +437,12 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Provisioned System Accounts ({availableUsers.length})</h3>
                 <p className="text-slate-500 text-[11px]">
-                  Separate accounts for Managing Director (MD), HR Admin, Reporting Manager, and Employees. Synchronized live with Employee records.
+                  Authoritative accounts synchronized live from PostgreSQL authentication database.
                 </p>
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">
-                Prototype Mode: Top-Right Persona Switcher Active · Production Mode: OIDC/SSO + MFA
+              <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold flex items-center gap-1.5">
+                <Check className="h-3.5 w-3.5 text-emerald-600" />
+                Live PostgreSQL Authentication Directory
               </span>
             </div>
             <div className="overflow-x-auto">
@@ -424,20 +458,33 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {availableUsers.map((u) => {
-                    const currentRole = u.role || u.roleCode || 'employee';
-                    const avatar = u.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.username || u.name || u.email)}&background=4f46e5&color=fff&size=256`;
-                    return (
-                      <tr key={u.id} className="hover:bg-slate-50">
-                        <td className="p-2.5 font-semibold text-slate-900 flex items-center gap-2">
-                          <img src={avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
-                          <div>
-                            <span>{u.username || u.name || u.email.split('@')[0]}</span>
-                            <span className="block text-[10px] font-mono text-slate-400">{u.employeeId || 'ID: External'}</span>
-                          </div>
-                        </td>
-                        <td className="p-2.5 font-mono text-slate-600">{u.email}</td>
-                        <td className="p-2.5 text-slate-700">{u.designationTitle || (currentRole === 'super_admin' ? 'Super Administrator' : 'Staff')}</td>
+                  {loadingUsers ? (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-slate-500">
+                        Loading authoritative system accounts from PostgreSQL database...
+                      </td>
+                    </tr>
+                  ) : availableUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-slate-500">
+                        No system accounts found in PostgreSQL database.
+                      </td>
+                    </tr>
+                  ) : (
+                    availableUsers.map((u) => {
+                      const currentRole = u.role || u.roleCode || 'employee';
+                      const avatar = u.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.username || u.name || u.email)}&background=4f46e5&color=fff&size=256`;
+                      return (
+                        <tr key={u.id} className="hover:bg-slate-50">
+                          <td className="p-2.5 font-semibold text-slate-900 flex items-center gap-2">
+                            <img src={avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
+                            <div>
+                              <span>{u.username || u.name || u.email.split('@')[0]}</span>
+                              <span className="block text-[10px] font-mono text-slate-400">{u.employeeId ? `EMP ID: ${u.employeeId}` : 'ID: External'}</span>
+                            </div>
+                          </td>
+                          <td className="p-2.5 font-mono text-slate-600">{u.email}</td>
+                          <td className="p-2.5 text-slate-700">{u.designationTitle || (currentRole === 'super_admin' ? 'Super Administrator' : (currentRole === 'hr_admin' ? 'HR Administrator' : 'Staff'))}</td>
                         <td className="p-2.5">
                           <span className={`px-2 py-0.5 rounded font-mono text-[11px] font-semibold ${
                             currentRole === 'super_admin' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
@@ -461,23 +508,26 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                         </td>
                         {isSuperAdmin && (
                           <td className="p-2.5 text-right">
-                            <select
-                              value={currentRole}
-                              disabled={updatingUserId === u.id || u.email === currentUser.email}
-                              onChange={(e) => handleRoleChange(u.id, e.target.value)}
-                              className="text-xs px-2 py-1 rounded border border-slate-200 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 cursor-pointer"
-                            >
-                              <option value="super_admin">Super Administrator</option>
-                              <option value="hr_admin">HR Administrator</option>
-                              <option value="senior_manager">Senior Management (MD)</option>
-                              <option value="reporting_manager">Reporting Manager</option>
-                              <option value="employee">Employee</option>
-                            </select>
+                            <div className="flex flex-col items-end gap-1">
+                              <select
+                                value={currentRole}
+                                disabled={updatingUserId === u.id}
+                                onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                                className="text-xs px-2 py-1 rounded border border-slate-200 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                                title="Assign System Role"
+                              >
+                                <option value="super_admin">Super Administrator</option>
+                                <option value="hr_admin">HR Administrator</option>
+                                <option value="senior_manager">Senior Management (MD)</option>
+                                <option value="reporting_manager">Reporting Manager</option>
+                                <option value="employee">Employee</option>
+                              </select>
+                            </div>
                           </td>
                         )}
                       </tr>
                     );
-                  })}
+                  }))}
                 </tbody>
               </table>
             </div>
@@ -562,64 +612,87 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {delegations.map((del) => (
-                  <tr key={del.id} className="hover:bg-slate-50/70">
-                    <td className="p-3 font-mono font-bold text-indigo-700">{del.id}</td>
-                    <td className="p-3">
-                      <div className="font-semibold text-slate-900">{del.delegatorName}</div>
-                      <div className="font-mono text-[10px] text-amber-700 uppercase">{del.delegatorRole}</div>
-                    </td>
-                    <td className="p-3">
-                      <div className="font-semibold text-slate-900">{del.delegateName}</div>
-                      <div className="font-mono text-[10px] text-slate-500 uppercase">{del.delegateRole}</div>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex flex-wrap gap-1 max-w-xs">
-                        {del.permittedActions.map((act) => (
-                          <span
-                            key={act}
-                            className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono text-[10px]"
-                          >
-                            {act}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="p-3 font-mono text-[11px] text-slate-700">
-                      {del.effectiveFrom} &rarr; {del.effectiveTo}
-                    </td>
-                    <td className="p-3 text-slate-600 max-w-xs">{del.reason}</td>
-                    <td className="p-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
-                          del.status === 'Active'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : 'bg-rose-50 text-rose-700 border-rose-200'
-                        }`}
-                      >
-                        {del.status}
-                      </span>
-                      {del.revokedAt && (
-                        <div className="text-[10px] text-slate-400 mt-0.5">
-                          Revoked {del.revokedAt}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-3 text-right">
-                      {del.status === 'Active' ? (
-                        <button
-                          type="button"
-                          onClick={() => handleRevokeDelegation(del)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[11px]"
-                        >
-                          <XCircle className="h-3 w-3" /> Revoke
-                        </button>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">Inactive</span>
-                      )}
+                {loadingDelegations ? (
+                  <tr>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">
+                      Loading persistent executive delegations from PostgreSQL database...
                     </td>
                   </tr>
-                ))}
+                ) : delegations.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">
+                      No executive delegations active. Click "Grant New Delegation" to create one.
+                    </td>
+                  </tr>
+                ) : (
+                  delegations.map((del) => {
+                    const delegator = availableUsers.find((u) => u.id === del.delegatorUserId);
+                    const delegate = availableUsers.find((u) => u.id === del.delegateUserId);
+                    const delegatorName = del.delegatorName || delegator?.username || delegator?.name || (delegator ? delegator.email.split('@')[0] : del.delegatorUserId);
+                    const delegatorRole = del.delegatorRole || delegator?.roleCode || delegator?.role || 'Executive';
+                    const delegateName = del.delegateName || delegate?.username || delegate?.name || (delegate ? delegate.email.split('@')[0] : del.delegateUserId);
+                    const delegateRole = del.delegateRole || delegate?.roleCode || delegate?.role || 'Delegate';
+                    const permittedList = Array.isArray(del.permittedActions) ? del.permittedActions : [];
+                    return (
+                      <tr key={del.id} className="hover:bg-slate-50/70">
+                        <td className="p-3 font-mono font-bold text-indigo-700">{del.id.slice(0, 8)}...</td>
+                        <td className="p-3">
+                          <div className="font-semibold text-slate-900">{delegatorName}</div>
+                          <div className="font-mono text-[10px] text-amber-700 uppercase">{delegatorRole}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-semibold text-slate-900">{delegateName}</div>
+                          <div className="font-mono text-[10px] text-slate-500 uppercase">{delegateRole}</div>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap gap-1 max-w-xs">
+                            {permittedList.map((act: string) => (
+                              <span
+                                key={act}
+                                className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono text-[10px]"
+                              >
+                                {act}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="p-3 font-mono text-[11px] text-slate-700">
+                          {del.effectiveFrom} &rarr; {del.effectiveTo}
+                        </td>
+                        <td className="p-3 text-slate-600 max-w-xs">{del.reason}</td>
+                        <td className="p-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                              del.status === 'Active'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-rose-50 text-rose-700 border-rose-200'
+                            }`}
+                          >
+                            {del.status}
+                          </span>
+                          {del.revokedAt && (
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              Revoked {String(del.revokedAt).slice(0, 10)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-right">
+                          {del.status === 'Active' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeDelegation(del)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[11px] cursor-pointer"
+                            >
+                              <XCircle className="h-3 w-3" /> Revoke
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-400">Revoked</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -657,13 +730,19 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                       onChange={(e) => setDelForm({ ...delForm, delegatorUserId: e.target.value })}
                       className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg bg-white"
                     >
+                      <option value="">-- Select Executive Delegator --</option>
                       {availableUsers
-                        .filter((u) => u.role === 'founder' || u.role === 'senior_manager')
-                        .map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.name} ({u.designationTitle})
-                          </option>
-                        ))}
+                        .filter((u) => ['super_admin', 'managing_director', 'senior_manager', 'hr_admin'].includes(u.roleCode || u.role))
+                        .map((u) => {
+                          const displayName = u.username || u.name || (u.email ? u.email.split('@')[0] : 'Administrator');
+                          const roleName = u.roleCode || u.role || 'Executive';
+                          const userEmail = u.email || 'internal';
+                          return (
+                            <option key={u.id} value={u.id}>
+                              {displayName} ({userEmail}) - {roleName}
+                            </option>
+                          );
+                        })}
                     </select>
                   </label>
                   <label className="block font-semibold text-slate-700">
@@ -673,13 +752,19 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
                       onChange={(e) => setDelForm({ ...delForm, delegateUserId: e.target.value })}
                       className="w-full mt-1 px-3 py-1.5 border border-slate-200 rounded-lg bg-white"
                     >
+                      <option value="">-- Select Authorized Delegate --</option>
                       {availableUsers
-                        .filter((u) => u.role !== 'employee')
-                        .map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.name} ({u.role})
-                          </option>
-                        ))}
+                        .filter((u) => u.id !== delForm.delegatorUserId)
+                        .map((u) => {
+                          const displayName = u.username || u.name || (u.email ? u.email.split('@')[0] : 'Employee');
+                          const roleName = u.roleCode || u.role || 'Staff';
+                          const userEmail = u.email || 'internal';
+                          return (
+                            <option key={u.id} value={u.id}>
+                              {displayName} ({userEmail}) - {roleName}
+                            </option>
+                          );
+                        })}
                     </select>
                   </label>
                   <label className="block font-semibold text-slate-700">
