@@ -1,4 +1,4 @@
-// Celestial HRMS - Employee Account Activation Page
+// Breakthru Enterprise Solution HRMS - Employee Account Activation Page
 // Public UI for Single-Use Activation Token Verification & Password Setup
 import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, Lock, CheckCircle2, AlertCircle, Loader2, ArrowRight, ShieldCheck } from 'lucide-react';
@@ -50,7 +50,7 @@ export const AccountActivationPage: React.FC<AccountActivationPageProps> = ({ on
     }
   }, []);
 
-  const companyName = companyProfile?.name || 'Celestial HRMS';
+  const companyName = companyProfile?.name || 'Breakthru Enterprise Solution';
   const brandInitial = companyName.charAt(0).toUpperCase() || 'O';
 
   // Password complexity checks

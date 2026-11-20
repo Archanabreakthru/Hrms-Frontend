@@ -18,10 +18,10 @@ export default defineConfig(() => {
     server: {
       port: 3000,
       host: '0.0.0.0',
-      allowedHosts: true,
+      allowedHosts: true as const,
       proxy: {
         '/api': {
-          target: 'http://localhost:5000',
+          target: 'http://127.0.0.1:5000',
           changeOrigin: true,
           secure: false,
         },
