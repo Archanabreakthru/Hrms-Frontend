@@ -24,7 +24,7 @@ export const LoginPage: React.FC = () => {
     }
   }, []);
 
-  const companyName = companyProfile?.name || 'Celestial HRMS';
+  const companyName = companyProfile?.name || 'Breakthru Enterprise Solution';
   const brandInitial = companyName.charAt(0).toUpperCase() || 'O';
 
   const handleSubmit = async (e: React.FormEvent) => {
