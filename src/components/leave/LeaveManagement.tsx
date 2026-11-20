@@ -152,11 +152,21 @@ export const LeaveManagement: React.FC<LeaveManagementProps> = ({ navContext, on
 
   // Scope filter:
   const scopedApplications = applications.filter((app) => {
-    if (currentUser.role === 'hr_admin') return true;
-    if (currentUser.role === 'senior_manager' || currentUser.role === 'reporting_manager') {
+    // HR, Super Admin, Admin, and Senior Management (MD) have overall access to view all records
+    if (
+      currentUser.role === 'hr_admin' ||
+      currentUser.role === 'super_admin' ||
+      currentUser.role === 'admin' ||
+      currentUser.role === 'senior_manager'
+    ) {
+      return true;
+    }
+    // Reporting Manager views their team records and self-service
+    if (currentUser.role === 'reporting_manager') {
       const emp = employees.find((e) => e.id === app.employeeId);
       return emp?.reportingManagerId === currentUser.employeeId || app.employeeId === currentUser.employeeId;
     }
+    // Employee views strictly their own records
     return app.employeeId === currentUser.employeeId;
   });
 

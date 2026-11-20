@@ -41,7 +41,7 @@ const DELEGABLE_ACTIONS_LIST: { id: DelegableAction; label: string }[] = [
 ];
 
 export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) => {
-  const { currentUser, canManageOrganization } = useAuth();
+  const { currentUser, canManageOrganization, switchRole } = useAuth();
   const [liveUsers, setLiveUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState<boolean>(true);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
@@ -67,6 +67,23 @@ export const CompanySettings: React.FC<CompanySettingsProps> = ({ navContext }) 
 
   const handleRoleChange = async (userId: string, newRole: string) => {
     setUpdatingUserId(userId);
+    const targetUser = liveUsers.find((u) => u.id === userId);
+    const isBootstrapOrSelf =
+      targetUser?.username === 'bootstrap_admin' ||
+      targetUser?.email === 'arunarchana2034@gmail.com' ||
+      userId === currentUser.id;
+
+    if (isBootstrapOrSelf) {
+      switchRole(newRole as any);
+      setLiveUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, role: newRole, roleCode: newRole } : u))
+      );
+      setSaveSuccess(`Switched active session view to "${newRole}". (Bootstrap Administrator account preserved in root database).`);
+      setTimeout(() => setSaveSuccess(''), 4000);
+      setUpdatingUserId(null);
+      return;
+    }
+
     try {
       const res = await authApi.updateUserRole(userId, newRole);
       if (res.success) {

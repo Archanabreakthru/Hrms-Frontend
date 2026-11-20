@@ -95,9 +95,15 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     if (navContext?.subTab === 'reportees') return 'reportees';
     return 'directory';
   });
+  const isOverallAccess =
+    currentUser.role === 'hr_admin' ||
+    currentUser.role === 'super_admin' ||
+    currentUser.role === 'admin' ||
+    currentUser.role === 'senior_manager';
+
   const [reporteeManagerFilter, setReporteeManagerFilter] = useState<string>(() => {
     if (navContext?.managerId) return navContext.managerId;
-    return currentUser.role === 'hr_admin' ? 'ALL_REPORTEES' : currentUser.employeeId;
+    return isOverallAccess ? 'ALL_REPORTEES' : currentUser.employeeId;
   });
   const [remoteEmployees, setRemoteEmployees] = useState<Employee[]>([]);
   const [loadingRemote, setLoadingRemote] = useState<boolean>(true);
@@ -214,7 +220,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   useEffect(() => {
     if (!navContext?.managerId) {
       setReporteeManagerFilter(
-        currentUser.role === 'hr_admin' ? 'ALL_REPORTEES' : currentUser.employeeId
+        isOverallAccess ? 'ALL_REPORTEES' : currentUser.employeeId
       );
     }
     if (!navContext?.subTab) {

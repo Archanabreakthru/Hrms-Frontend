@@ -16,7 +16,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 
 export const UserProfileDropdown: React.FC = () => {
-  const { currentUser, currentEmployee, logout } = useAuth();
+  const { currentUser, currentEmployee, logout, switchRole } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -96,6 +96,28 @@ export const UserProfileDropdown: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Quick Active Role Switcher */}
+          <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/60">
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center justify-between">
+              <span>Switch Active Role (RBAC):</span>
+              <span className="text-[9px] font-normal text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">Live View</span>
+            </label>
+            <select
+              value={currentUser.role}
+              onChange={(e) => {
+                switchRole(e.target.value as UserRole);
+                setIsOpen(false);
+              }}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+            >
+              <option value="super_admin">Super Administrator</option>
+              <option value="hr_admin">HR Administrator</option>
+              <option value="senior_manager">Senior Management (MD)</option>
+              <option value="reporting_manager">Reporting Manager</option>
+              <option value="employee">Employee</option>
+            </select>
           </div>
 
           {/* Account Security Badge */}

@@ -43,7 +43,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const { currentUser, canAccessModule } = useAuth();
+  const { currentUser, canAccessModule, switchRole } = useAuth();
 
   const [pendingLeaves, setPendingLeaves] = useState<number>(0);
   const [pendingCorrections, setPendingCorrections] = useState<number>(0);
@@ -203,29 +203,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       </div>
 
       {/* Role Pill Banner */}
-      <div className={`px-4 py-2.5 bg-slate-950/60 border-b border-slate-800/80 text-[11px] flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
+      <div className={`px-3 py-2 bg-slate-950/80 border-b border-slate-800/80 text-[11px] flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
         {collapsed ? (
           <ShieldCheck className="h-4 w-4 text-indigo-400" />
         ) : (
-          <>
-            <span className="text-slate-400 flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5 text-indigo-400" />
-              <span>Active Role:</span>
+          <div className="w-full flex items-center justify-between gap-1">
+            <span className="text-slate-400 flex items-center gap-1 shrink-0">
+              <ShieldCheck className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+              <span className="text-[10px] uppercase font-bold text-slate-400">Role:</span>
             </span>
-            <span className="font-medium capitalize text-slate-200">
-              {String(currentUser?.role || '').toLowerCase() === 'super_admin'
-                ? 'Super Administrator'
-                : String(currentUser?.role || '').toLowerCase() === 'admin'
-                ? 'Administrator'
-                : String(currentUser?.role || '').toLowerCase() === 'hr_admin'
-                ? 'HR'
-                : String(currentUser?.role || '').toLowerCase() === 'senior_manager'
-                ? 'Senior Management'
-                : String(currentUser?.role || '').toLowerCase() === 'reporting_manager'
-                ? 'Reporting Manager'
-                : 'Employee'}
-            </span>
-          </>
+            <select
+              value={currentUser?.role || 'super_admin'}
+              onChange={(e) => switchRole(e.target.value as any)}
+              className="bg-slate-800 text-indigo-300 font-semibold text-[11px] rounded px-1.5 py-0.5 border border-slate-700 hover:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[155px] truncate"
+              title="Click to switch active role"
+            >
+              <option value="super_admin">Super Administrator</option>
+              <option value="hr_admin">HR Administrator</option>
+              <option value="senior_manager">Senior Management (MD)</option>
+              <option value="reporting_manager">Reporting Manager</option>
+              <option value="employee">Employee</option>
+            </select>
+          </div>
         )}
       </div>
 

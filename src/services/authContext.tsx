@@ -18,6 +18,7 @@ interface AuthContextType {
   allPersonas: CurrentUser[];
   login: (usernameOrEmail: string, passwordInput: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
+  switchRole: (role: any) => void;
   canAccessModule: (module: 'hr' | 'organization' | 'clients' | 'service_records' | 'leave' | 'payroll' | 'expenses' | 'assets' | 'attendance' | 'reports' | 'settings') => boolean;
   canViewConfidentialSalary: (targetEmployeeId: string) => boolean;
   canManageOrganization: () => boolean;
@@ -44,6 +45,99 @@ function enrichPersonaWithLiveEmployee(persona: CurrentUser): CurrentUser {
     avatarUrl: emp.avatarUrl && emp.avatarUrl.trim() ? emp.avatarUrl : fallbackAvatar
   };
 }
+
+export const SIMULATED_ROLE_PERSONAS: Record<string, CurrentUser> = {
+  super_admin: {
+    id: 'user_super_admin',
+    name: 'Bootstrap Administrator',
+    username: 'bootstrap_admin',
+    email: 'arunarchana2034@gmail.com',
+    role: 'super_admin',
+    employeeId: 'EMP-ADM-0001',
+    departmentId: 'DEP-EXEC',
+    designationTitle: 'Super Administrator',
+    avatarUrl: 'https://ui-avatars.com/api/?name=Bootstrap+Administrator&background=4f46e5&color=fff&size=256',
+    permissions: ['*']
+  },
+  hr_admin: {
+    id: 'user_hr_admin',
+    name: 'Raseedh (HR Admin)',
+    username: 'raseedh_hr',
+    email: 'raseedh@orbyx.internal',
+    role: 'hr_admin',
+    employeeId: 'EMP-HRM-0012',
+    departmentId: 'DEP-HR',
+    designationTitle: 'HR Administrator & People Ops Lead',
+    avatarUrl: 'https://ui-avatars.com/api/?name=Raseedh+HR&background=059669&color=fff&size=256',
+    permissions: [
+      'org.profile.manage', 'org.branches.manage', 'org.departments.manage', 'org.designations.manage',
+      'employee.profile.create', 'employee.profile.read_all', 'employee.profile.update_all', 'employee.profile.delete',
+      'employee.salary.read', 'employee.salary.update',
+      'attendance.read_all', 'attendance.approve_all', 'attendance.manual_entry',
+      'leave.read_all', 'leave.approve_all',
+      'payroll.process', 'payroll.structure.manage', 'payslips.read_all',
+      'expenses.read_all', 'expenses.approve_all', 'expenses.reimburse',
+      'assets.manage', 'documents.manage', 'client.deployments.manage', 'client.organizations.manage'
+    ]
+  },
+  senior_manager: {
+    id: 'user_md_selvakumar',
+    name: 'Dr. A. Selvakumar (MD)',
+    username: 'selvakumar_md',
+    email: 'selvakumar.md@orbyx.internal',
+    role: 'senior_manager',
+    employeeId: 'EMP-MD-0001',
+    departmentId: 'DEP-EXEC',
+    designationTitle: 'Managing Director (MD)',
+    avatarUrl: 'https://ui-avatars.com/api/?name=Dr+Selvakumar&background=d97706&color=fff&size=256',
+    permissions: [
+      'org.profile.read', 'employee.directory.read_basic', 'employee.profile.read_all', 'employee.salary.read',
+      'attendance.read_all', 'attendance.approve_all', 'leave.read_all', 'leave.approve_all',
+      'client.organizations.manage', 'client.deployments.manage', 'client.deployments.read_assigned',
+      'payroll.process', 'payslips.read_all', 'expenses.read_all', 'expenses.approve_all',
+      'assets.read_all', 'documents.read_all', 'reports.organization.read', 'reports.executive.read',
+      'reports.payroll.view_aggregate', 'audit.logs.read_all'
+    ]
+  },
+  reporting_manager: {
+    id: 'user_mgr_krisharaj',
+    name: 'KrishaRaj (Delivery Manager)',
+    username: 'krisharaj_mgr',
+    email: 'krisharaj@orbyx.internal',
+    role: 'reporting_manager',
+    employeeId: 'EMP-SDM-0003',
+    departmentId: 'DEP-ENG',
+    designationTitle: 'Senior Delivery Manager & Reporting Manager',
+    avatarUrl: 'https://ui-avatars.com/api/?name=Krisha+Raj&background=2563eb&color=fff&size=256',
+    permissions: [
+      'employee.directory.read_basic', 'employee.profile.read_self', 'employee.profile.read_team',
+      'attendance.punch_self', 'attendance.read_team', 'attendance.approve_team',
+      'leave.apply_self', 'leave.read_team', 'leave.approve_team',
+      'client.deployments.read_assigned',
+      'expenses.claim_self', 'expenses.read_team', 'expenses.approve_team',
+      'payslips.read_self', 'notifications.read_self'
+    ]
+  },
+  employee: {
+    id: 'user_emp_archana',
+    name: 'Archana P (Software Engineer)',
+    username: 'archana_eng',
+    email: 'archupadhmanabhan2003@gmail.com',
+    role: 'employee',
+    employeeId: 'EMP-SWE-0004',
+    departmentId: 'DEP-ENG',
+    designationTitle: 'Software Engineer',
+    avatarUrl: 'https://ui-avatars.com/api/?name=Archana+P&background=7c3aed&color=fff&size=256',
+    permissions: [
+      'employee.directory.read_basic', 'employee.profile.read_self', 'employee.profile.update_self',
+      'attendance.punch_self', 'attendance.regularize_self',
+      'leave.apply_self',
+      'client.deployments.read_assigned',
+      'expenses.claim_self', 'assets.read_self', 'assets.acknowledge_self',
+      'payslips.read_self', 'notifications.read_self'
+    ]
+  }
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeUser, setActiveUser] = useState<CurrentUser | null>(() => {
@@ -338,9 +432,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const canViewConfidentialSalary = (targetEmployeeId: string): boolean => {
     if (!isAuthenticated || !currentUser) return false;
     const r = String(currentUser.role || '').toLowerCase();
-    if (r === 'super_admin' || r === 'admin' || r === 'hr_admin') return true;
+    if (r === 'super_admin' || r === 'admin' || r === 'hr_admin' || r === 'senior_manager') return true;
     if (currentUser.permissions?.some((p) => p === 'employee.salary.read' || p === '*')) return true;
     return currentUser.employeeId === targetEmployeeId;
+  };
+
+  const switchRole = (roleInput: any) => {
+    const roleKey = String(roleInput).toLowerCase();
+    const persona = SIMULATED_ROLE_PERSONAS[roleKey] || SIMULATED_ROLE_PERSONAS.employee;
+    setActiveUser(persona);
+    localStorage.setItem('celestial_hrms_user_profile', JSON.stringify(persona));
+    localStorage.setItem(Celestial_SESSION_KEY, persona.id);
   };
 
   const canManageOrganization = (): boolean => {
@@ -380,6 +482,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         allPersonas,
         login,
         logout,
+        switchRole,
         canAccessModule,
         canViewConfidentialSalary,
         canManageOrganization,

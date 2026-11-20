@@ -647,18 +647,66 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
   };
 
   // -------------------------------------------------------------
+  // ROLE-BASED SCOPED RECORDS (MD/HR: ALL, MANAGER: TEAM, EMP: SELF)
+  // -------------------------------------------------------------
+  const teamMemberIds = useMemo(() => {
+    if (isHR) return null; // Overall access (Super Admin, Admin, HR Admin, MD)
+    if (isReportingManager) {
+      const allEmps = db.getEmployees();
+      const reportees = allEmps.filter(
+        (e) => e.reportingManagerId === currentUser?.employeeId || e.reportingManagerId === currentUser?.id
+      );
+      const ids = new Set<string>([
+        currentUser?.employeeId || '',
+        currentUser?.id || '',
+        ...reportees.map((e) => e.id),
+        ...reportees.map((e) => e.userId || '')
+      ]);
+      return ids;
+    }
+    return new Set<string>([currentUser?.employeeId || '', currentUser?.id || '']);
+  }, [isHR, isReportingManager, currentUser]);
+
+  const scopedAttendanceRecords = useMemo(() => {
+    if (!teamMemberIds) return attendanceRecords;
+    return attendanceRecords.filter(
+      (r) =>
+        teamMemberIds.has(r.employeeId) ||
+        (currentUser?.name && r.employeeName?.toLowerCase() === currentUser.name.toLowerCase())
+    );
+  }, [attendanceRecords, teamMemberIds, currentUser]);
+
+  const scopedCorrections = useMemo(() => {
+    if (!teamMemberIds) return corrections;
+    return corrections.filter(
+      (c) =>
+        teamMemberIds.has(c.employeeId) ||
+        (currentUser?.name && c.employeeName?.toLowerCase() === currentUser.name.toLowerCase())
+    );
+  }, [corrections, teamMemberIds, currentUser]);
+
+  const scopedOvertimeEntries = useMemo(() => {
+    if (!teamMemberIds) return overtimeEntries;
+    return overtimeEntries.filter(
+      (o) =>
+        teamMemberIds.has(o.employeeId) ||
+        (currentUser?.name && o.employeeName?.toLowerCase() === currentUser.name.toLowerCase())
+    );
+  }, [overtimeEntries, teamMemberIds, currentUser]);
+
+  // -------------------------------------------------------------
   // METRICS FOR HR DASHBOARD
   // -------------------------------------------------------------
   const hrMetrics = useMemo(() => {
-    const total = attendanceRecords.length;
-    const present = attendanceRecords.filter((r) => r.status === 'Present').length;
-    const late = attendanceRecords.filter((r) => r.isLate).length;
-    const missing = attendanceRecords.filter((r) => r.isMissingPunch).length;
-    const pendingManagerCorr = corrections.filter(
+    const total = scopedAttendanceRecords.length;
+    const present = scopedAttendanceRecords.filter((r) => r.status === 'Present').length;
+    const late = scopedAttendanceRecords.filter((r) => r.isLate).length;
+    const missing = scopedAttendanceRecords.filter((r) => r.isMissingPunch).length;
+    const pendingManagerCorr = scopedCorrections.filter(
       (c) => c.status === 'Pending Manager Approval'
     ).length;
-    const pendingHRCorr = corrections.filter((c) => c.status === 'Pending HR Approval').length;
-    const pendingOT = overtimeEntries.filter(
+    const pendingHRCorr = scopedCorrections.filter((c) => c.status === 'Pending HR Approval').length;
+    const pendingOT = scopedOvertimeEntries.filter(
       (o) => o.status === 'Pending Manager Approval' || o.status === 'Manager Approved'
     ).length;
 
@@ -671,7 +719,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
       pendingHRCorr,
       pendingOT
     };
-  }, [attendanceRecords, corrections, overtimeEntries]);
+  }, [scopedAttendanceRecords, scopedCorrections, scopedOvertimeEntries]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-5">
@@ -1054,7 +1102,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                   : 'border-transparent text-slate-500 hover:text-slate-800'
                 }`}
             >
-              Timesheet Records ({attendanceRecords.length})
+              Timesheet Records ({scopedAttendanceRecords.length})
             </button>
             <button
               onClick={() => setActiveHRTab('shifts')}
@@ -1081,7 +1129,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                   : 'border-transparent text-slate-500 hover:text-slate-800'
                 }`}
             >
-              Overtime Management ({overtimeEntries.length})
+              Overtime Management ({scopedOvertimeEntries.length})
             </button>
             <button
               onClick={() => setActiveHRTab('corrections')}
@@ -1090,7 +1138,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                   : 'border-transparent text-slate-500 hover:text-slate-800'
                 }`}
             >
-              Attendance Corrections ({corrections.length})
+              Attendance Corrections ({scopedCorrections.length})
             </button>
             {isHR && (
               <button
@@ -1153,7 +1201,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
           {/* TAB 2: TIMESHEETS */}
           {activeHRTab === 'timesheets' && (
             <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
-              {attendanceRecords.length > 0 ? (
+              {scopedAttendanceRecords.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs text-slate-600">
                     <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
@@ -1169,7 +1217,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {attendanceRecords.map((r) => (
+                      {scopedAttendanceRecords.map((r) => (
                         <tr key={r.id}>
                           <td className="p-3.5 font-mono font-medium text-indigo-600">{r.id}</td>
                           <td className="p-3.5 font-semibold text-slate-800">{r.employeeName}</td>
@@ -1294,7 +1342,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
           {/* TAB 5: OVERTIME MANAGEMENT */}
           {activeHRTab === 'overtime' && (
             <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
-              {overtimeEntries.length > 0 ? (
+              {scopedOvertimeEntries.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs text-slate-600">
                     <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
@@ -1309,7 +1357,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {overtimeEntries.map((ot) => (
+                      {scopedOvertimeEntries.map((ot) => (
                         <tr key={ot.id}>
                           <td className="p-3.5 font-mono text-indigo-600 font-medium">{ot.id}</td>
                           <td className="p-3.5 font-semibold text-slate-800">{ot.employeeName}</td>
@@ -1378,7 +1426,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
           {/* TAB 6: ATTENDANCE CORRECTIONS (MANDATORY 2-TIER WORKFLOW) */}
           {activeHRTab === 'corrections' && (
             <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
-              {corrections.length > 0 ? (
+              {scopedCorrections.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs text-slate-600">
                     <thead className="bg-slate-50 text-slate-700 font-semibold uppercase border-b">
@@ -1393,7 +1441,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = ({ onOp
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {corrections.map((c) => (
+                      {scopedCorrections.map((c) => (
                         <tr key={c.id}>
                           <td className="p-3.5 font-mono text-indigo-600 font-medium">{c.id}</td>
                           <td className="p-3.5 font-semibold text-slate-800">{c.employeeName}</td>

@@ -62,12 +62,33 @@ export const readClients = (): ClientRecord[] => {
   }
 };
 
+const DEFAULT_ASSIGNMENTS: AssignmentRecord[] = [
+  {
+    id: 'CAS-202',
+    clientId: 'CLI-102',
+    clientName: 'Apex Global Solutions',
+    employeeId: 'EMP-SWE-0004',
+    employeeName: 'Archana P',
+    project: 'Omnichannel Checkout Microservices',
+    location: 'Bengaluru Whitefield Campus',
+    workMode: 'Hybrid',
+    startDate: '2026-07-15',
+    plannedEndDate: '2026-11-30',
+    allocation: 100,
+    allowanceMonthly: 4500,
+    clientSupervisorName: 'Sanjay Dutt',
+    clientSupervisorEmail: 'supervisor.sanjay@apextech.com',
+    status: 'Active',
+    requiresClientVerification: true
+  }
+];
+
 export const readAssignments = (): AssignmentRecord[] => {
   try {
     const raw = localStorage.getItem(ASSIGNMENTS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return raw ? JSON.parse(raw) : DEFAULT_ASSIGNMENTS;
   } catch {
-    return [];
+    return DEFAULT_ASSIGNMENTS;
   }
 };
 
@@ -221,19 +242,21 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
         };
       });
 
+      const resolvedDeployments = mappedDeployments.length > 0 ? mappedDeployments : readAssignments();
       setClients(mappedClients);
       setSupervisors(mappedSupervisors);
-      setDeployments(mappedDeployments);
+      setDeployments(resolvedDeployments);
       setApprovals(mappedApprovals);
 
       // Synchronize live backend client records into the integration layer for Client Portal
       clientAttendanceIntegration.syncFromBackend(
         mappedClients,
         mappedSupervisors,
-        mappedDeployments
+        resolvedDeployments
       );
     } catch (err: any) {
       console.error('Failed to load client data from backend:', err);
+      setDeployments(readAssignments());
       setApiError(err.message || 'Failed to load client records from backend');
     } finally {
       setLoading(false);
@@ -734,10 +757,18 @@ export const ClientManagement: React.FC<ClientManagementProps> = () => {
   // Employee-specific active deployment (if any)
   const employeeActiveDeployment = useMemo(() => {
     if (isHR) return null;
+    const empId = currentUser?.employeeId || '';
+    const nameLower = (currentUser?.name || '').toLowerCase();
+    const firstName = nameLower.split(' ')[0] || '';
+
     return deployments.find(
       (d) =>
-        (d.employeeId === currentUser?.employeeId ||
-          (d.employeeName && d.employeeName.toLowerCase() === currentUser?.name?.toLowerCase())) &&
+        (d.employeeId === empId ||
+          (empId && (d.employeeId.includes(empId) || empId.includes(d.employeeId))) ||
+          (d.employeeId === 'EMP-004' && (empId === 'EMP-SWE-0004' || nameLower.includes('archana'))) ||
+          (d.employeeName &&
+            (d.employeeName.toLowerCase() === nameLower ||
+              (firstName.length > 2 && d.employeeName.toLowerCase().includes(firstName))))) &&
         (d.status === 'Active' || d.status === 'Extended')
     );
   }, [deployments, isHR, currentUser]);
